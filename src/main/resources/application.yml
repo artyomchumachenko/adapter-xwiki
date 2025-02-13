@@ -1,0 +1,25 @@
+server:
+  port: ${SERVER_PORT}
+
+spring:
+  datasource:
+    url: jdbc:postgresql://${DB_HOST}:${DB_PORT}/${DB_NAME}?currentSchema=${DB_SCHEMA}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+  ai:
+    ollama:
+      base-url: ${AI_OLLAMA_BASE_URL}
+      embedding:
+        enabled: ${AI_EMBEDDING_ENABLED}
+
+xwiki:
+  baseUrl: ${XWIKI_BASE_URL}
+  username: ${XWIKI_USERNAME}
+  password: ${XWIKI_PASSWORD}
+  modifications:
+    enabled: ${XWIKI_MODIFICATIONS_ENABLED}
+
+logging:
+  level:
+    root: ${LOG_LEVEL_ROOT}
+    ru.cbgr.adapter.xwiki.service: ${LOG_LEVEL_SERVICE_LAYER}
