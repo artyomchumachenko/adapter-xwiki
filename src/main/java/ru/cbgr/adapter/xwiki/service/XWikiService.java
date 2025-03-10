@@ -1,10 +1,18 @@
 package ru.cbgr.adapter.xwiki.service;
 
+import java.util.List;
 import java.util.Optional;
 
+import com.pgvector.PGvector;
+
+import org.springframework.ai.embedding.Embedding;
+import org.springframework.ai.embedding.EmbeddingResponse;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
+import ru.cbgr.adapter.xwiki.chunker.CombinedContentChunker;
 import ru.cbgr.adapter.xwiki.client.XWikiClient;
+import ru.cbgr.adapter.xwiki.dto.xwiki.ModificationsResponse;
 import ru.cbgr.adapter.xwiki.dto.xwiki.PagesResponse;
 import ru.cbgr.adapter.xwiki.dto.xwiki.SpacesResponse;
 import ru.cbgr.adapter.xwiki.dto.xwiki.modifications.Link;
@@ -16,11 +24,26 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 @Service
-@RequiredArgsConstructor
 @Slf4j
-public class EmbeddingsProcessorService { // todo Проанализировать ответы от xwiki api
+@RequiredArgsConstructor
+public class XWikiService { // todo Добавить мапперы
+
+    private static final List<String> EXPECTED_IDS_FOR_PROCESS_ALL = List.of(
+            "xwiki:Дивизион разработки.MDM.Системный анализ.Макет списочной формы каталогов"
+    );
+    private static final Boolean ALL_SPACE_PROCESSING = Boolean.FALSE;
 
     private final XWikiClient xWikiClient;
+    private final ContentNormalizationService contentNormalizationService;
+    private final LlamaAiService llamaAiService;
+
+    private final JdbcTemplate jdbcTemplate;
+
+    private final CombinedContentChunker chunker;
+
+    public ModificationsResponse getModifications() {
+        return xWikiClient.getModifications();
+    }
 
     /**
      * Обходит все пространства, полученные по /rest/wikis/xwiki/spaces,
@@ -33,6 +56,11 @@ public class EmbeddingsProcessorService { // todo Проанализироват
             return;
         }
         for (Space space : spacesResponse.getSpaces()) {
+            if (space.getId().startsWith("xwiki:Help") || space.getId().startsWith("xwiki:Main") || space.getId().startsWith("xwiki:Sandbox") || space.getId().startsWith("xwiki:XWiki")) continue;
+
+            // Обрабатываем только конкретное пространство
+            if (!ALL_SPACE_PROCESSING && !EXPECTED_IDS_FOR_PROCESS_ALL.contains(space.getId())) continue;
+
             processSpace(space);
         }
     }
@@ -92,12 +120,6 @@ public class EmbeddingsProcessorService { // todo Проанализироват
         String detailUrl = detailLinkOpt.get().getHref();
         log.debug("Получаем данные страницы по URL: {}", detailUrl);
 
-        // Вызываем getPageDetails только если URL заканчивается на "/WebHome"
-        /*if (!detailUrl.endsWith("/WebHome")) {
-            log.info("Ссылка {} не заканчивается на /WebHome, пропускаем обработку страницы: {}", detailUrl, page.getId());
-            return;
-        }*/
-
         // Получаем подробности страницы (например, объект PageDetails), где содержится поле content
         PageDetails pageDetails = xWikiClient.getPageDetails(detailUrl);
         if (pageDetails == null || pageDetails.getContent() == null || pageDetails.getContent().isEmpty()) {
@@ -106,12 +128,29 @@ public class EmbeddingsProcessorService { // todo Проанализироват
         }
 
         String content = pageDetails.getContent();
-        log.info(content);
+        List<String> chunks = chunker.chunkContent(content, 2048, 5, 10);
 
-        // Нормализуем content, генерируем эмбеддинг и так далее
-//        String normalizedText = textPreprocessingService.preprocess(content);
-//        float[] embedding = embeddingGenerationService.generateEmbedding(normalizedText);
-//        log.info("Embedding: {}", Arrays.toString(embedding));
-        // Если требуется – переходим к следующей странице
+        // Обработка каждого чанка
+        for (String chunk : chunks) {
+            // Нормализуем чанк
+            String normalizedChunk = contentNormalizationService.normalize(chunk);
+            // Генерируем эмбеддинги для нормализованного текста
+            EmbeddingResponse embeddingResponse = llamaAiService.getEmbeddings(normalizedChunk);
+
+            List<Embedding> embeddings = embeddingResponse.getResults();
+            for (Embedding embedding : embeddings) {
+                List<Double> output = embedding.getOutput();
+                float[] vector = new float[output.size()];
+                for (int i = 0; i < output.size(); i++) {
+                    vector[i] = output.get(i).floatValue();
+                }
+                // Создаем объект PGvector
+                PGvector pgVector = new PGvector(vector);
+
+                // Сохраняем эмбеддинг в базу данных
+                String sql = "INSERT INTO page_embeddings (embedding, xwiki_absolute_url) VALUES (?, ?)";
+                jdbcTemplate.update(sql, pgVector, page.getXwikiAbsoluteUrl());
+            }
+        }
     }
 }

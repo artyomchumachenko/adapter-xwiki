@@ -1,7 +1,6 @@
 package ru.cbgr.adapter.xwiki.client;
 
-import java.net.URLDecoder;
-import java.nio.charset.StandardCharsets;
+import java.net.URI;
 
 import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
@@ -61,28 +60,23 @@ public class XWikiClient {
      * URL используется «как есть» (уже закодирован).
      */
     public PagesResponse getPages(String pagesUrl) {
-        String modifiedUrl = UriComponentsBuilder
+        URI uri = UriComponentsBuilder
                 .fromUriString(pagesUrl)
                 .queryParam("media", "json")
                 .build(true)
-                .toUriString();
-        String decodedUrl = URLDecoder.decode(modifiedUrl, StandardCharsets.UTF_8);
-        return xWikiRestTemplate.getForObject(decodedUrl, PagesResponse.class);
+                .toUri();
+        return xWikiRestTemplate.getForObject(uri, PagesResponse.class);
     }
 
     /**
      * Получает подробную информацию о странице в виде объекта PageDetails.
-     *
-     * @param pageUrl URL, по которому возвращается JSON с полем content
-     * @return объект PageDetails с данными страницы
      */
     public PageDetails getPageDetails(String pageUrl) {
-        String modifiedUrl = UriComponentsBuilder
+        URI uri = UriComponentsBuilder
                 .fromUriString(pageUrl)
                 .queryParam("media", "json")
                 .build(true)
-                .toUriString();
-        String decodedUrl = URLDecoder.decode(modifiedUrl, StandardCharsets.UTF_8);
-        return xWikiRestTemplate.getForObject(decodedUrl, PageDetails.class);
+                .toUri();
+        return xWikiRestTemplate.getForObject(uri, PageDetails.class);
     }
 }

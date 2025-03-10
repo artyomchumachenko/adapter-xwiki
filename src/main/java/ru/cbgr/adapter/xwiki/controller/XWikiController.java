@@ -6,8 +6,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
 import ru.cbgr.adapter.xwiki.dto.xwiki.ModificationsResponse;
-import ru.cbgr.adapter.xwiki.service.EmbeddingsProcessorService;
-import ru.cbgr.adapter.xwiki.service.XWikiModificationsService;
+import ru.cbgr.adapter.xwiki.service.XWikiService;
 
 import lombok.RequiredArgsConstructor;
 
@@ -16,8 +15,7 @@ import lombok.RequiredArgsConstructor;
 @RequiredArgsConstructor
 public class XWikiController {
 
-    private final XWikiModificationsService xWikiModificationsService;
-    private final EmbeddingsProcessorService embeddingsProcessorService;
+    private final XWikiService xWikiService;
 
     /**
      * Эндпоинт для получения агрегированной истории изменений из XWiki.
@@ -27,13 +25,13 @@ public class XWikiController {
      */
     @GetMapping("/modifications")
     public ResponseEntity<ModificationsResponse> getModifications() {
-        ModificationsResponse modifications = xWikiModificationsService.getModifications();
+        ModificationsResponse modifications = xWikiService.getModifications();
         return ResponseEntity.ok(modifications);
     }
 
     @GetMapping("/processAll")
     public ResponseEntity<String> processAllSpacesAndPages() {
-        embeddingsProcessorService.processAllSpacesAndPages();
+        xWikiService.processAllSpacesAndPages();
         return ResponseEntity.ok("Обработка пространств и страниц запущена.");
     }
 }
