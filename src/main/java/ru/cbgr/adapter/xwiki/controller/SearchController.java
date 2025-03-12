@@ -8,6 +8,7 @@ import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
+import ru.cbgr.adapter.xwiki.model.dto.DocumentEmbeddingDto;
 import ru.cbgr.adapter.xwiki.service.SearchService;
 
 import lombok.RequiredArgsConstructor;
@@ -28,11 +29,11 @@ public class SearchController {
      * @return ResponseEntity со списком URL
      */
     @GetMapping
-    public ResponseEntity<List<String>> search(
+    public ResponseEntity<List<DocumentEmbeddingDto>> search(
             @RequestParam String query,
             @RequestParam(defaultValue = "5") int limit) {
 
-        List<String> urls = searchService.search(query, limit);
+        List<DocumentEmbeddingDto> urls = searchService.search(query, limit);
         return ResponseEntity.ok(urls);
     }
 }

@@ -5,14 +5,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
-import org.springframework.stereotype.Component;
-
 import lombok.extern.slf4j.Slf4j;
 
-/**
- * Чанкер для обычного текста.
- * Реализует разбиение на разделы по заголовкам и на чанки по предложениям с перекрытием.
- */
 @Slf4j
 public class TextChunker {
 
@@ -33,8 +27,8 @@ public class TextChunker {
             if (section.length() <= maxChunkSize) {
                 chunks.add(section);
             } else {
-                // Если раздел слишком длинный, делим его на чанки по предложениям
-                List<String> sectionChunks = chunkSectionBySentences(section, maxChunkSize, overlapSentences);
+                // Если раздел слишком длинный, делим его на чанки по предложениям с оптимизированной реализацией
+                List<String> sectionChunks = chunkSectionBySentencesOptimized(section, maxChunkSize, overlapSentences);
                 chunks.addAll(sectionChunks);
             }
         }
@@ -55,65 +49,58 @@ public class TextChunker {
         for (String line : lines) {
             // Если строка начинается с типичного заголовка ("**" или "==")
             if (line.trim().startsWith("**") || line.trim().startsWith("==")) {
-                if (!currentSection.isEmpty()) {
+                if (currentSection.length() > 0) {
                     sections.add(currentSection.toString().trim());
                     currentSection.setLength(0);
                 }
             }
             currentSection.append(line).append("\n");
         }
-        if (!currentSection.isEmpty()) {
+        if (currentSection.length() > 0) {
             sections.add(currentSection.toString().trim());
         }
         return sections;
     }
 
     /**
-     * Разбивает длинный раздел на чанки, используя разбиение на предложения.
+     * Оптимизированное разбиение длинного раздела на чанки по предложениям с учетом перекрытия.
+     * Вместо предварительного создания списка строк-предложений формируем список границ предложений.
      *
      * @param text             Текст раздела.
      * @param maxChunkSize     Максимальное число символов в чанке.
      * @param overlapSentences Количество предложений для перекрытия между чанками.
      * @return Список чанков раздела.
      */
-    private List<String> chunkSectionBySentences(String text, int maxChunkSize, int overlapSentences) {
+    private List<String> chunkSectionBySentencesOptimized(String text, int maxChunkSize, int overlapSentences) {
         List<String> chunks = new ArrayList<>();
-        List<String> sentences = splitIntoSentences(text);
 
-        int sentenceIndex = 0;
-        while (sentenceIndex < sentences.size()) {
-            StringBuilder chunk = new StringBuilder();
-            int startSentence = sentenceIndex;
-            // Собираем предложения, пока длина чанка не достигнет максимума
-            while (sentenceIndex < sentences.size() &&
-                    chunk.length() + sentences.get(sentenceIndex).length() <= maxChunkSize) {
-                chunk.append(sentences.get(sentenceIndex)).append(" ");
-                sentenceIndex++;
-            }
-            chunks.add(chunk.toString().trim());
-            // Перекрытие: возвращаемся назад на заданное число предложений
-            sentenceIndex = Math.max(startSentence, sentenceIndex - overlapSentences);
-        }
-        return chunks;
-    }
-
-    /**
-     * Разбивает текст на предложения с учетом правил языка.
-     *
-     * @param text Исходный текст.
-     * @return Список предложений.
-     */
-    private List<String> splitIntoSentences(String text) {
-        List<String> sentences = new ArrayList<>();
+        // Используем BreakIterator для определения границ предложений без создания отдельной строки для каждого предложения
         BreakIterator iterator = BreakIterator.getSentenceInstance(new Locale("ru"));
         iterator.setText(text);
         int start = iterator.first();
-        for (int end = iterator.next(); end != BreakIterator.DONE; start = end, end = iterator.next()) {
-            String sentence = text.substring(start, end).trim();
-            if (!sentence.isEmpty()) {
-                sentences.add(sentence);
-            }
+        List<Integer> boundaries = new ArrayList<>();
+        boundaries.add(start);
+        int end = iterator.next();
+        while (end != BreakIterator.DONE) {
+            boundaries.add(end);
+            end = iterator.next();
         }
-        return sentences;
+
+        int sentenceCount = boundaries.size() - 1;
+        int sentenceIndex = 0;
+        while (sentenceIndex < sentenceCount) {
+            int chunkStart = boundaries.get(sentenceIndex);
+            int lastSentence = sentenceIndex;
+            // Находим, сколько предложений можно добавить, не превышая maxChunkSize
+            while (lastSentence + 1 < sentenceCount && (boundaries.get(lastSentence + 1) - chunkStart) <= maxChunkSize) {
+                lastSentence++;
+            }
+            // Формируем чанк, используя границы предложения
+            String chunk = text.substring(chunkStart, boundaries.get(lastSentence)).trim();
+            chunks.add(chunk);
+            // Сдвигаемся назад на overlapSentences для перекрытия между чанками
+            sentenceIndex = Math.max(sentenceIndex + 1, lastSentence - overlapSentences + 1);
+        }
+        return chunks;
     }
 }

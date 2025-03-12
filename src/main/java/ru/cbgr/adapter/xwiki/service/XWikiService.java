@@ -29,9 +29,9 @@ import lombok.extern.slf4j.Slf4j;
 public class XWikiService { // todo Добавить мапперы
 
     private static final List<String> EXPECTED_IDS_FOR_PROCESS_ALL = List.of(
-            "xwiki:Дивизион разработки.MDM.Системный анализ.Макет списочной формы каталогов"
+            "xwiki:Дивизион разработки.MDM.Системный анализ.Макеты страницы \"Группы пользователей\""
     );
-    private static final Boolean ALL_SPACE_PROCESSING = Boolean.FALSE;
+    private static final Boolean ALL_SPACE_PROCESSING = Boolean.TRUE;
 
     private final XWikiClient xWikiClient;
     private final ContentNormalizationService contentNormalizationService;
@@ -102,7 +102,8 @@ public class XWikiService { // todo Добавить мапперы
      * – получает подробную информацию о странице в виде объекта PageDetails,
      * – извлекает только поле content,
      * – нормализует текст,
-     * – генерирует эмбеддинг.
+     * – генерирует эмбеддинг,
+     * – нормализует эмбеддинг и сохраняет его с метаданными в таблицу document_embeddings.
      */
     private void processPage(PageSummary page) {
         log.info("Обрабатываем страницу: {}", page.getId());
@@ -120,7 +121,7 @@ public class XWikiService { // todo Добавить мапперы
         String detailUrl = detailLinkOpt.get().getHref();
         log.debug("Получаем данные страницы по URL: {}", detailUrl);
 
-        // Получаем подробности страницы (например, объект PageDetails), где содержится поле content
+        // Получаем подробности страницы, где содержится поле content
         PageDetails pageDetails = xWikiClient.getPageDetails(detailUrl);
         if (pageDetails == null || pageDetails.getContent() == null || pageDetails.getContent().isEmpty()) {
             log.warn("Поле content пустое для страницы: {}", page.getId());
@@ -128,29 +129,61 @@ public class XWikiService { // todo Добавить мапперы
         }
 
         String content = pageDetails.getContent();
-        List<String> chunks = chunker.chunkContent(content, 2048, 5, 10);
+        List<String> chunks = chunker.chunkContent(content, 500, 3, 10);
 
-        // Обработка каждого чанка
-        for (String chunk : chunks) {
+        // Обработка каждого чанка с учётом индекса чанка
+        for (int i = 0; i < chunks.size(); i++) {
+            String chunk = chunks.get(i);
             // Нормализуем чанк
             String normalizedChunk = contentNormalizationService.normalize(chunk);
-            // Генерируем эмбеддинги для нормализованного текста
-            EmbeddingResponse embeddingResponse = llamaAiService.getEmbeddings(normalizedChunk);
+            if (normalizedChunk.isEmpty()) continue;
 
+            // Генерируем эмбеддинг для нормализованного текста
+            EmbeddingResponse embeddingResponse;
+            try {
+                embeddingResponse = llamaAiService.getEmbeddings(normalizedChunk);
+            } catch (Exception ex) {
+                log.error("Skip chunk with: {}", normalizedChunk);
+                continue;
+            }
             List<Embedding> embeddings = embeddingResponse.getResults();
             for (Embedding embedding : embeddings) {
                 List<Double> output = embedding.getOutput();
                 float[] vector = new float[output.size()];
-                for (int i = 0; i < output.size(); i++) {
-                    vector[i] = output.get(i).floatValue();
+                for (int j = 0; j < output.size(); j++) {
+                    vector[j] = output.get(j).floatValue();
                 }
-                // Создаем объект PGvector
-                PGvector pgVector = new PGvector(vector);
+                // Нормализуем вектор
+                float[] normalizedVector = normalizeVector(vector);
+                // Создаем объект PGvector для хранения в БД
+                PGvector pgVector = new PGvector(normalizedVector);
 
-                // Сохраняем эмбеддинг в базу данных
-                String sql = "INSERT INTO page_embeddings (embedding, xwiki_absolute_url) VALUES (?, ?)";
-                jdbcTemplate.update(sql, pgVector, page.getXwikiAbsoluteUrl());
+                // Сохраняем эмбеддинг в таблицу document_embeddings
+                String sql = "INSERT INTO document_embeddings (document_id, chunk_index, embedding, text_snippet) VALUES (?, ?, ?, ?)";
+                // Здесь предполагается, что page.getId() возвращает идентификатор документа.
+                jdbcTemplate.update(sql, page.getId(), i, pgVector, normalizedChunk);
             }
         }
     }
+
+    /**
+     * Нормализует вектор, приводя его к единичной длине (L2-норма).
+     *
+     * @param vector исходный вектор
+     * @return нормализованный вектор
+     */
+    private float[] normalizeVector(float[] vector) {
+        double sum = 0.0;
+        for (float v : vector) {
+            sum += v * v;
+        }
+        double norm = Math.sqrt(sum);
+        if (norm == 0) return vector; // Предотвращаем деление на ноль
+        float[] normalized = new float[vector.length];
+        for (int i = 0; i < vector.length; i++) {
+            normalized[i] = vector[i] / (float) norm;
+        }
+        return normalized;
+    }
+
 }

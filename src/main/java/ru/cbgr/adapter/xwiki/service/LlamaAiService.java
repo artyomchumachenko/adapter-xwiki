@@ -13,12 +13,14 @@ import org.springframework.ai.ollama.api.OllamaOptions;
 import org.springframework.stereotype.Service;
 
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 @Service
 @RequiredArgsConstructor
+@Slf4j
 public class LlamaAiService { // todo Добавить мапперы
 
-    public static final String MODEL_VERSION = "bambucha/saiga-llama3:8b";
+    public static final String MODEL_VERSION = "qllama/multilingual-e5-base";
 
     private final OllamaChatModel chatModel;
     private final OllamaEmbeddingModel embeddingModel;
@@ -45,6 +47,7 @@ public class LlamaAiService { // todo Добавить мапперы
      * @return EmbeddingResponse с векторами текста
      */
     public EmbeddingResponse getEmbeddings(String message) {
+        log.info("Get embeddings for: {}", message);
         if (message == null || message.isEmpty()) {
             throw new IllegalArgumentException("Входное сообщение не должно быть пустым.");
         }
