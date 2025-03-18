@@ -9,6 +9,7 @@ import org.springframework.ai.embedding.EmbeddingResponse;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
+import ru.cbgr.adapter.xwiki.client.LlamaAiClient;
 import ru.cbgr.adapter.xwiki.mapper.DocumentEmbeddingMapper;
 import ru.cbgr.adapter.xwiki.model.DocumentEmbedding;
 import ru.cbgr.adapter.xwiki.model.dto.DocumentEmbeddingDto;
@@ -22,7 +23,7 @@ import lombok.extern.slf4j.Slf4j;
 public class SearchService {
 
     private final JdbcTemplate jdbcTemplate;
-    private final LlamaAiService llamaAiService;
+    private final LlamaAiClient llamaAiClient;
     private final ContentNormalizationService contentNormalizationService;
 
     /**
@@ -35,7 +36,7 @@ public class SearchService {
      */
     public List<DocumentEmbeddingDto> search(String query, int limit) {
         // Получаем эмбеддинг запроса через LlamaAiService
-        EmbeddingResponse embeddingResponse = llamaAiService.getEmbeddings(
+        EmbeddingResponse embeddingResponse = llamaAiClient.getEmbeddings(
                 contentNormalizationService.normalize(query));
         List<Embedding> embeddings = embeddingResponse.getResults();
         if (embeddings == null || embeddings.isEmpty()) {

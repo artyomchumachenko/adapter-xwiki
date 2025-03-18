@@ -11,7 +11,7 @@ import ru.cbgr.adapter.xwiki.service.XWikiService;
 import lombok.RequiredArgsConstructor;
 
 @RestController
-@RequestMapping("/api/wiki")
+@RequestMapping("/api/xwiki")
 @RequiredArgsConstructor
 public class XWikiController {
 

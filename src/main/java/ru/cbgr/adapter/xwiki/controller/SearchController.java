@@ -14,7 +14,7 @@ import ru.cbgr.adapter.xwiki.service.SearchService;
 import lombok.RequiredArgsConstructor;
 
 @RestController
-@RequestMapping("/api/search")
+@RequestMapping("/api/xwiki/search")
 @RequiredArgsConstructor
 public class SearchController {
 

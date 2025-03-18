@@ -49,14 +49,14 @@ public class TextChunker {
         for (String line : lines) {
             // Если строка начинается с типичного заголовка ("**" или "==")
             if (line.trim().startsWith("**") || line.trim().startsWith("==")) {
-                if (currentSection.length() > 0) {
+                if (!currentSection.isEmpty()) {
                     sections.add(currentSection.toString().trim());
                     currentSection.setLength(0);
                 }
             }
             currentSection.append(line).append("\n");
         }
-        if (currentSection.length() > 0) {
+        if (!currentSection.isEmpty()) {
             sections.add(currentSection.toString().trim());
         }
         return sections;

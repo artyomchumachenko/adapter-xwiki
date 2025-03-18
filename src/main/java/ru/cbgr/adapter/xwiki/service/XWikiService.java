@@ -11,6 +11,7 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import ru.cbgr.adapter.xwiki.chunker.CombinedContentChunker;
+import ru.cbgr.adapter.xwiki.client.LlamaAiClient;
 import ru.cbgr.adapter.xwiki.client.XWikiClient;
 import ru.cbgr.adapter.xwiki.dto.xwiki.ModificationsResponse;
 import ru.cbgr.adapter.xwiki.dto.xwiki.PagesResponse;
@@ -35,7 +36,7 @@ public class XWikiService { // todo Добавить мапперы
 
     private final XWikiClient xWikiClient;
     private final ContentNormalizationService contentNormalizationService;
-    private final LlamaAiService llamaAiService;
+    private final LlamaAiClient llamaAiClient;
 
     private final JdbcTemplate jdbcTemplate;
 
@@ -106,6 +107,14 @@ public class XWikiService { // todo Добавить мапперы
      * – нормализует эмбеддинг и сохраняет его с метаданными в таблицу document_embeddings.
      */
     private void processPage(PageSummary page) {
+        // Проверяем, есть ли уже данные для данного документа в базе todo Сделать более красивую реализацию
+        String checkSql = "SELECT count(*) FROM document_embeddings WHERE document_id = ?";
+        Integer count = jdbcTemplate.queryForObject(checkSql, Integer.class, page.getId());
+        if (count != null && count > 0) {
+            log.info("Для страницы {} уже существует информация в базе данных. Пропускаем обработку.", page.getId());
+            return;
+        }
+
         log.info("Обрабатываем страницу: {}", page.getId());
 
         Optional<Link> detailLinkOpt = page.getLinks().stream()
@@ -129,7 +138,7 @@ public class XWikiService { // todo Добавить мапперы
         }
 
         String content = pageDetails.getContent();
-        List<String> chunks = chunker.chunkContent(content, 500, 3, 10);
+        List<String> chunks = chunker.chunkContent(content, 1500, 3, 10);
 
         // Обработка каждого чанка с учётом индекса чанка
         for (int i = 0; i < chunks.size(); i++) {
@@ -141,7 +150,7 @@ public class XWikiService { // todo Добавить мапперы
             // Генерируем эмбеддинг для нормализованного текста
             EmbeddingResponse embeddingResponse;
             try {
-                embeddingResponse = llamaAiService.getEmbeddings(normalizedChunk);
+                embeddingResponse = llamaAiClient.getEmbeddings(normalizedChunk);
             } catch (Exception ex) {
                 log.error("Skip chunk with: {}", normalizedChunk);
                 continue;

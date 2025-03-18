@@ -8,7 +8,7 @@ import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
 import ru.cbgr.adapter.xwiki.client.XWikiClient;
-import ru.cbgr.adapter.xwiki.configuration.ModificationCheckerProperties;
+import ru.cbgr.adapter.xwiki.configuration.properties.ModificationCheckerProperties;
 import ru.cbgr.adapter.xwiki.dto.xwiki.ModificationsResponse;
 import ru.cbgr.adapter.xwiki.dto.xwiki.modifications.HistorySummary;
 
@@ -19,7 +19,7 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 @RequiredArgsConstructor
 @ConditionalOnProperty(prefix = "xwiki.modifications", name = "enabled", havingValue = "true")
-public class ModificationCheckerEvent {
+public class ModificationCheckerEvent { // todo Пока на холде, требует доработок
 
     private final XWikiClient xWikiClient;
     private final ModificationCheckerProperties properties;

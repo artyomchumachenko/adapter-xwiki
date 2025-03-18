@@ -4,8 +4,6 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
-import org.springframework.stereotype.Component;
-
 import lombok.extern.slf4j.Slf4j;
 
 /**
@@ -46,36 +44,4 @@ public class TableChunker {
         return chunks;
     }
 
-    /**
-     * Пример выделения таблиц из общего контента.
-     * Здесь предполагается, что таблица начинается со строки, начинающейся с "|=".
-     *
-     * @param content Общий текст.
-     * @return Список найденных таблиц.
-     */
-    public List<String> extractTables(String content) {
-        List<String> tables = new ArrayList<>();
-        String[] lines = content.split("\\r?\\n");
-        StringBuilder currentTable = new StringBuilder();
-        boolean inTable = false;
-        for (String line : lines) {
-            // Если строка начинается с "|" или "|=", считаем её частью таблицы
-            if (line.trim().startsWith("|")) {
-                currentTable.append(line).append("\n");
-                inTable = true;
-            } else {
-                // Если вышли из таблицы, сохраняем накопленный блок
-                if (inTable && !currentTable.isEmpty()) {
-                    tables.add(currentTable.toString().trim());
-                    currentTable.setLength(0);
-                    inTable = false;
-                }
-            }
-        }
-        // Если контент закончился внутри таблицы
-        if (inTable && !currentTable.isEmpty()) {
-            tables.add(currentTable.toString().trim());
-        }
-        return tables;
-    }
 }

@@ -7,7 +7,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.web.client.RestTemplate;
 import org.springframework.web.util.UriComponentsBuilder;
 
-import ru.cbgr.adapter.xwiki.configuration.XWikiProperties;
+import ru.cbgr.adapter.xwiki.configuration.properties.XWikiProperties;
 import ru.cbgr.adapter.xwiki.dto.xwiki.ModificationsResponse;
 import ru.cbgr.adapter.xwiki.dto.xwiki.PagesResponse;
 import ru.cbgr.adapter.xwiki.dto.xwiki.SpacesResponse;

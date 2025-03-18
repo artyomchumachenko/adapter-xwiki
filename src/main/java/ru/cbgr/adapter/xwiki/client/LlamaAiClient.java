@@ -1,4 +1,4 @@
-package ru.cbgr.adapter.xwiki.service;
+package ru.cbgr.adapter.xwiki.client;
 
 import java.util.ArrayList;
 import java.util.List;
@@ -18,7 +18,7 @@ import lombok.extern.slf4j.Slf4j;
 @Service
 @RequiredArgsConstructor
 @Slf4j
-public class LlamaAiService { // todo Добавить мапперы
+public class LlamaAiClient { // todo Добавить мапперы
 
     public static final String MODEL_VERSION = "qllama/multilingual-e5-base";
 
