@@ -31,8 +31,8 @@ models:
   embedding-models:
     - model: qllama/multilingual-e5-base
       vector-size: 768
+      index: vector_l2_ops
     - model: bge-m3
       vector-size: 1024
-    - model: paraphrase-multilingual
-      vector-size: 768
+      index: vector_cosine_ops
   llm-model: ilyagusev/saiga_llama3

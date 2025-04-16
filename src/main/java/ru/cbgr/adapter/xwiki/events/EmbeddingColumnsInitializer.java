@@ -31,10 +31,14 @@ public class EmbeddingColumnsInitializer implements CommandLineRunner {
             Integer count = jdbcTemplate.queryForObject(checkQuery, new Object[]{columnName}, Integer.class);
 
             if (count != null && count == 0) {
-                // Получаем размер вектора из record, иначе выбрасываем исключение
+                // Получаем размер вектора и тип индекса из record, иначе выбрасываем исключение
                 Integer vectorSize = config.vectorSize();
+                String indexOp = config.index();
                 if (vectorSize == null) {
                     throw new IllegalStateException("Не указан размер вектора для embedding-модели: " + model);
+                }
+                if (indexOp == null || indexOp.isEmpty()) {
+                    throw new IllegalStateException("Не указан тип индекса для embedding-модели: " + model);
                 }
                 String alterQuery = "ALTER TABLE embeddings ADD COLUMN " + columnName + " vector(" + vectorSize + ")";
                 jdbcTemplate.execute(alterQuery);
@@ -43,9 +47,9 @@ public class EmbeddingColumnsInitializer implements CommandLineRunner {
                 // Создаём индекс для новой колонки.
                 // Формируем имя индекса, например: "idx_" + columnName + "_hnsw"
                 String indexName = "idx_" + columnName + "_hnsw";
-                // SQL-запрос для создания индекса с использованием оператора hnsw и оператора vector_l2_ops
+                // SQL-запрос для создания индекса с использованием оператора hnsw и полученного оператора для индексации
                 String createIndexQuery = "CREATE INDEX " + indexName +
-                        " ON embeddings USING hnsw (" + columnName + " vector_l2_ops)";
+                        " ON embeddings USING hnsw (" + columnName + " " + indexOp + ")";
                 jdbcTemplate.execute(createIndexQuery);
                 log.info("Индекс {} успешно создан для колонки {}.", indexName, columnName);
             } else {

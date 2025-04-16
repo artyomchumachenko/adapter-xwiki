@@ -54,6 +54,7 @@ public class XWikiService {
     private final JdbcTemplate jdbcTemplate;
 
     private final ContentNormalizationService contentNormalizationService;
+    private final VectorNormalizationService vectorNormalizationService;
     private final CombinedContentChunker chunker;
 
     private final ModelsProperties modelsProperties;
@@ -162,7 +163,7 @@ public class XWikiService {
             return;
         }
         String content = pageDetails.getContent();
-        List<String> chunks = chunker.chunkContent(content, 500, 3, 10);
+        List<String> chunks = chunker.chunkContent(content, 1000, 3, 10);
 
         processChunks(savedPage, chunks);
     }
@@ -208,7 +209,7 @@ public class XWikiService {
             return;
         }
         String content = pageDetails.getContent();
-        List<String> chunks = chunker.chunkContent(content, 500, 3, 10);
+        List<String> chunks = chunker.chunkContent(content, 1000, 3, 10);
 
         processChunks(updatedPage, chunks);
     }
@@ -274,7 +275,7 @@ public class XWikiService {
                 for (int j = 0; j < output.size(); j++) {
                     vector[j] = output.get(j).floatValue();
                 }
-                float[] normalizedVector = normalizeVector(vector);
+                float[] normalizedVector = vectorNormalizationService.normalizeVector(modelConfig.index(), vector);
                 PGvector pgVector = new PGvector(normalizedVector);
 
                 // Вычисляем имя динамической колонки: заменяем все символы, не являющиеся цифрами или латинскими буквами, на нижнее подчёркивание, затем добавляем суффикс _embedding
@@ -284,26 +285,6 @@ public class XWikiService {
                 log.debug("Эмбеддинг для модели {} сохранён в колонку {} для embedding_id {}.", modelName, columnName, embeddingId);
             }
         }
-    }
-
-    /**
-     * Нормализует вектор, приводя его к единичной длине (L2-норма).
-     *
-     * @param vector исходный вектор
-     * @return нормализованный вектор
-     */
-    private float[] normalizeVector(float[] vector) {
-        double sum = 0.0;
-        for (float v : vector) {
-            sum += v * v;
-        }
-        double norm = Math.sqrt(sum);
-        if (norm == 0) return vector; // Предотвращаем деление на ноль
-        float[] normalized = new float[vector.length];
-        for (int i = 0; i < vector.length; i++) {
-            normalized[i] = vector[i] / (float) norm;
-        }
-        return normalized;
     }
 
     /**
@@ -361,7 +342,7 @@ public class XWikiService {
                 for (int i = 0; i < output.size(); i++) {
                     vector[i] = output.get(i).floatValue();
                 }
-                float[] normalizedVector = normalizeVector(vector);
+                float[] normalizedVector = vectorNormalizationService.normalizeVector(modelConfig.index(), vector);
                 PGvector queryVector = new PGvector(normalizedVector);
                 queryVectors.put(modelName, queryVector);
             } catch (Exception ex) {

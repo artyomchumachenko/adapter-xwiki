@@ -20,7 +20,7 @@ public class CombinedContentChunker {
     private final TextChunker textChunker = new TextChunker();
 
     // Минимальный размер текстового чанка (в символах)
-    private static final int MIN_CHUNK_SIZE = 250;
+    private static final int MIN_CHUNK_SIZE = 200;
 
     /**
      * Разбивает исходный контент на чанки с учетом наличия таблиц.
