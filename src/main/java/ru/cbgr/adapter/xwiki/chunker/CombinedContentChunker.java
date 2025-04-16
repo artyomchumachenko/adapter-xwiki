@@ -19,6 +19,9 @@ public class CombinedContentChunker {
     private final TableChunker tableChunker = new TableChunker();
     private final TextChunker textChunker = new TextChunker();
 
+    // Минимальный размер текстового чанка (в символах)
+    private static final int MIN_CHUNK_SIZE = 250;
+
     /**
      * Разбивает исходный контент на чанки с учетом наличия таблиц.
      *
@@ -76,7 +79,46 @@ public class CombinedContentChunker {
         } else {
             // Обрабатываем как обычный текст
             List<String> textChunks = textChunker.chunkText(trimmed, maxChunkSize, overlapSentences);
-            chunks.addAll(textChunks);
+            // Объединение текстовых чанков, если их длина меньше MIN_CHUNK_SIZE (800 символов)
+            List<String> mergedTextChunks = mergeSmallTextChunks(textChunks);
+            chunks.addAll(mergedTextChunks);
         }
+    }
+
+    /**
+     * Объединяет соседние текстовые чанки так, чтобы каждый имел не менее minChunkSize символов.
+     * Если длина текущего чанка меньше минимальной, из начала следующего чанка берется недостающая часть.
+     * Если следующий чанк целиком не умещается, то он делится: добавляется лишь необходимая часть,
+     * а остаток остается для дальнейшей обработки.
+     *
+     * @param chunks Список исходных текстовых чанков.
+     * @return Новый список чанков, удовлетворяющий условию минимальной длины.
+     */
+    private List<String> mergeSmallTextChunks(List<String> chunks) {
+        List<String> merged = new ArrayList<>();
+        int index = 0;
+        while (index < chunks.size()) {
+            // Начинаем новый чанк
+            StringBuilder currentChunk = new StringBuilder(chunks.get(index));
+            index++;
+            // Пока длина текущего чанка меньше требуемой и есть последующие чанки
+            while (currentChunk.length() < CombinedContentChunker.MIN_CHUNK_SIZE && index < chunks.size()) {
+                String nextChunk = chunks.get(index);
+                int needed = CombinedContentChunker.MIN_CHUNK_SIZE - currentChunk.length();
+                if (nextChunk.length() <= needed) {
+                    // Если следующий чанк целиком помещается, то добавляем его полностью
+                    currentChunk.append(" ").append(nextChunk);
+                    index++;
+                } else {
+                    // Если весь следующий чанк не помещается, добавляем нужную часть
+                    currentChunk.append(" ").append(nextChunk, 0, needed);
+                    // Обновляем следующий чанк оставшейся частью
+                    chunks.set(index, nextChunk.substring(needed));
+                    break; // Завершаем формирование текущего чанка
+                }
+            }
+            merged.add(currentChunk.toString());
+        }
+        return merged;
     }
 }

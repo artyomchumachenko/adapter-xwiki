@@ -1,12 +1,14 @@
 package ru.cbgr.adapter.xwiki.service;
 
 import java.sql.PreparedStatement;
-import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Optional;
+import java.util.function.Function;
+import java.util.stream.Collectors;
 
 import com.pgvector.PGvector;
 
@@ -160,7 +162,7 @@ public class XWikiService {
             return;
         }
         String content = pageDetails.getContent();
-        List<String> chunks = chunker.chunkContent(content, 1500, 3, 10);
+        List<String> chunks = chunker.chunkContent(content, 500, 3, 10);
 
         processChunks(savedPage, chunks);
     }
@@ -206,7 +208,7 @@ public class XWikiService {
             return;
         }
         String content = pageDetails.getContent();
-        List<String> chunks = chunker.chunkContent(content, 1500, 3, 10);
+        List<String> chunks = chunker.chunkContent(content, 500, 3, 10);
 
         processChunks(updatedPage, chunks);
     }
@@ -377,8 +379,8 @@ public class XWikiService {
                 "ORDER BY distance ASC " +
                 "LIMIT ?";
 
-        List<DocumentEmbeddingDto> combinedResults = new ArrayList<>();
-
+        // Собираем результаты для каждой модели
+        Map<String, List<DocumentEmbeddingDto>> allModelResults = new HashMap<>();
         for (Map.Entry<String, PGvector> entry : queryVectors.entrySet()) {
             String modelName = entry.getKey();
             PGvector queryVector = entry.getValue();
@@ -390,11 +392,10 @@ public class XWikiService {
             List<DocumentEmbeddingDto> modelResults = jdbcTemplate.query(
                     sql,
                     (rs, rowNum) -> {
-                        // Извлекаем xwikiId и chunk_index из таблицы pages и chunks
                         String xwikiId = rs.getString("xwiki_id");
                         int chunkIndex = rs.getInt("chunk_index");
 
-                        // Читаем значение эмбеддинга, преобразуя объект в PGvector
+                        // Преобразуем объект из БД в PGvector
                         Object embeddingObj = rs.getObject("embedding");
                         PGvector embeddingVector;
                         if (embeddingObj instanceof PGvector) {
@@ -405,30 +406,69 @@ public class XWikiService {
                             throw new IllegalStateException("Невозможно преобразовать объект "
                                     + embeddingObj.getClass() + " в PGvector");
                         }
-
                         String textSnippet = rs.getString("text_snippet");
                         double distance = rs.getDouble("distance");
                         return new DocumentEmbeddingDto(xwikiId, chunkIndex, embeddingVector, textSnippet, distance);
                     },
                     queryVector, limit
             );
-
-            combinedResults.addAll(modelResults);
+            allModelResults.put(modelName, modelResults);
             modelResults.forEach(dto ->
                     log.info("Найден документ {} с расстоянием {} для модели {}",
                             dto.getXwikiId(), dto.getDistance(), modelName)
             );
         }
 
-        // 3. Сортируем объединенный список результатов по возрастанию расстояния
-        combinedResults.sort(Comparator.comparingDouble(DocumentEmbeddingDto::getDistance));
+        // 1. Для каждой модели выбираем топ-5 уникальных результатов (уникальность по xwikiId и chunkIndex)
+        // и присваиваем им оценку на основе позиции в рейтинге (от 1.0 до 0.2)
+        Map<String, Double> combinedScores = new HashMap<>();
+        Map<String, DocumentEmbeddingDto> resultByUniqueKey = new HashMap<>();
 
-        // При необходимости расширяем текстовый фрагмент (например, добавляем контекст)
-        combinedResults.forEach(dto -> dto.setTextSnippet(getExtendedTextSnippet(dto)));
+        for (Map.Entry<String, List<DocumentEmbeddingDto>> entry : allModelResults.entrySet()) {
+            String modelName = entry.getKey();
+            List<DocumentEmbeddingDto> resultsForModel = entry.getValue();
 
-        return combinedResults;
+            // Сортируем результаты по возрастанию расстояния (лучшие записи впереди)
+            resultsForModel.sort(Comparator.comparingDouble(DocumentEmbeddingDto::getDistance));
+
+            // Извлекаем уникальные результаты (если имеются дубликаты по xwikiId+chunkIndex, оставляем первый)
+            Map<String, DocumentEmbeddingDto> uniqueForModel = resultsForModel.stream()
+                    .collect(Collectors.toMap(
+                            dto -> dto.getXwikiId() + "_" + dto.getChunkIndex(),
+                            Function.identity(),
+                            (dto1, dto2) -> dto1,
+                            LinkedHashMap::new)); // LinkedHashMap сохраняет порядок
+
+            // Берем первые 5 уникальных записей
+            List<DocumentEmbeddingDto> top5ForModel = uniqueForModel.values().stream().limit(5).toList();
+
+            // Для каждой записи вычисляем оценку, зависящую от её позиции в top5 (например, 1.0, 0.8, 0.6, 0.4, 0.2)
+            for (int i = 0; i < top5ForModel.size(); i++) {
+                DocumentEmbeddingDto dto = top5ForModel.get(i);
+                double score = (5 - i) / 5.0; // Ранг 0 => 1.0, 1 => 0.8, 2 => 0.6, 3 => 0.4, 4 => 0.2
+
+                String uniqueKey = dto.getXwikiId() + "_" + dto.getChunkIndex();
+                // Суммируем оценку, если такая запись уже встречалась от другой модели
+                combinedScores.merge(uniqueKey, score, Double::sum);
+                // Сохраняем DTO (при повторном появлении той же записи оставляем первое встретившееся)
+                resultByUniqueKey.putIfAbsent(uniqueKey, dto);
+            }
+        }
+
+        // 2. Выбираем 5 записей с наивысшей суммарной оценкой
+        List<DocumentEmbeddingDto> finalResults = combinedScores.entrySet().stream()
+                .sorted(Map.Entry.comparingByValue(Comparator.reverseOrder()))
+                .limit(5)
+                .map(entry -> resultByUniqueKey.get(entry.getKey()))
+                .collect(Collectors.toList());
+
+        // При необходимости можно выполнить доработку – например, расширить текстовый фрагмент каждого результата
+        finalResults.forEach(dto -> dto.setTextSnippet(getExtendedTextSnippet(dto)));
+
+        return finalResults;
     }
 
+    // todo
     private String getExtendedTextSnippet(DocumentEmbeddingDto dto) {
         return dto.getTextSnippet();
     }

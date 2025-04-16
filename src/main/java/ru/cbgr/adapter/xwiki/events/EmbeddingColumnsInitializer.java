@@ -39,6 +39,15 @@ public class EmbeddingColumnsInitializer implements CommandLineRunner {
                 String alterQuery = "ALTER TABLE embeddings ADD COLUMN " + columnName + " vector(" + vectorSize + ")";
                 jdbcTemplate.execute(alterQuery);
                 log.info("Колонка {} успешно добавлена в таблицу embeddings.", columnName);
+
+                // Создаём индекс для новой колонки.
+                // Формируем имя индекса, например: "idx_" + columnName + "_hnsw"
+                String indexName = "idx_" + columnName + "_hnsw";
+                // SQL-запрос для создания индекса с использованием оператора hnsw и оператора vector_l2_ops
+                String createIndexQuery = "CREATE INDEX " + indexName +
+                        " ON embeddings USING hnsw (" + columnName + " vector_l2_ops)";
+                jdbcTemplate.execute(createIndexQuery);
+                log.info("Индекс {} успешно создан для колонки {}.", indexName, columnName);
             } else {
                 log.info("Колонка {} уже существует в таблице embeddings.", columnName);
             }
