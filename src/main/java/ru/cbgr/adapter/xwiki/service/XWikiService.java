@@ -107,6 +107,9 @@ public class XWikiService { // todo Добавить мапперы
      * – нормализует эмбеддинг и сохраняет его с метаданными в таблицу document_embeddings.
      */
     private void processPage(PageSummary page) {
+        // переделать миграцию для векторной БД
+        // для xwiki храним version для проверки актуальности
+
         // Проверяем, есть ли уже данные для данного документа в базе todo Сделать более красивую реализацию
         String checkSql = "SELECT count(*) FROM document_embeddings WHERE document_id = ?";
         Integer count = jdbcTemplate.queryForObject(checkSql, Integer.class, page.getId());

@@ -26,3 +26,9 @@ logging:
   level:
     root: ${LOG_LEVEL_ROOT}
     ru.cbgr.adapter.xwiki.service: ${LOG_LEVEL_SERVICE_LAYER}
+
+models:
+  embedding-models:
+    - model: qllama/multilingual-e5-base
+      vector-size: 768
+  llm-model: ilyagusev/saiga_llama3
