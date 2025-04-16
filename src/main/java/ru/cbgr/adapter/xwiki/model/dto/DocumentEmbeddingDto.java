@@ -10,12 +10,9 @@ import lombok.NoArgsConstructor;
 @NoArgsConstructor
 @AllArgsConstructor
 public class DocumentEmbeddingDto {
-    private Long id;
-    private String documentId;
+    private String xwikiId;
     private Integer chunkIndex;
     private PGvector embedding;
     private String textSnippet;
-    private LocalDateTime createdAt;
-    private LocalDateTime updatedAt;
     private double distance;
 }

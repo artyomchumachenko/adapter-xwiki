@@ -1,7 +1,11 @@
 package ru.cbgr.adapter.xwiki.service;
 
 import java.sql.PreparedStatement;
+import java.util.ArrayList;
+import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
 
 import com.pgvector.PGvector;
@@ -19,7 +23,6 @@ import ru.cbgr.adapter.xwiki.client.LlamaAiClient;
 import ru.cbgr.adapter.xwiki.client.XWikiClient;
 import ru.cbgr.adapter.xwiki.configuration.properties.EmbeddingModelConfigRecord;
 import ru.cbgr.adapter.xwiki.configuration.properties.ModelsProperties;
-import ru.cbgr.adapter.xwiki.dto.xwiki.ModificationsResponse;
 import ru.cbgr.adapter.xwiki.dto.xwiki.PagesResponse;
 import ru.cbgr.adapter.xwiki.dto.xwiki.SpacesResponse;
 import ru.cbgr.adapter.xwiki.dto.xwiki.modifications.Link;
@@ -28,6 +31,7 @@ import ru.cbgr.adapter.xwiki.dto.xwiki.page.PageSummary;
 import ru.cbgr.adapter.xwiki.dto.xwiki.space.Space;
 import ru.cbgr.adapter.xwiki.model.Chunk;
 import ru.cbgr.adapter.xwiki.model.Page;
+import ru.cbgr.adapter.xwiki.model.dto.DocumentEmbeddingDto;
 import ru.cbgr.adapter.xwiki.repository.ChunkRepository;
 import ru.cbgr.adapter.xwiki.repository.PageRepository;
 
@@ -40,31 +44,23 @@ import lombok.extern.slf4j.Slf4j;
 @RequiredArgsConstructor
 public class XWikiService {
 
-    private static final List<String> EXPECTED_IDS_FOR_PROCESS_ALL = List.of(
-            "xwiki:Дивизион разработки.MDM.Системный анализ.Макеты страницы \"Группы пользователей\""
-    );
-    private static final Boolean ALL_SPACE_PROCESSING = Boolean.TRUE;
-
     private final XWikiClient xWikiClient;
-    private final ContentNormalizationService contentNormalizationService;
     private final LlamaAiClient llamaAiClient;
+
     private final PageRepository pageRepository;
     private final ChunkRepository chunkRepository;
-
     private final JdbcTemplate jdbcTemplate;
 
+    private final ContentNormalizationService contentNormalizationService;
     private final CombinedContentChunker chunker;
 
     private final ModelsProperties modelsProperties;
-
-    public ModificationsResponse getModifications() {
-        return xWikiClient.getModifications();
-    }
 
     /**
      * Обходит все пространства, полученные по /rest/wikis/xwiki/spaces,
      * и для каждого пространства обрабатывает страницы.
      */
+    @Transactional
     public void processAllSpacesAndPages() {
         SpacesResponse spacesResponse = xWikiClient.getSpaces();
         if (spacesResponse == null || spacesResponse.getSpaces() == null) {
@@ -73,9 +69,6 @@ public class XWikiService {
         }
         for (Space space : spacesResponse.getSpaces()) {
             if (space.getId().startsWith("xwiki:Help") || space.getId().startsWith("xwiki:Main") || space.getId().startsWith("xwiki:Sandbox") || space.getId().startsWith("xwiki:XWiki")) continue;
-
-            // Обрабатываем только конкретное пространство
-            if (!ALL_SPACE_PROCESSING && !EXPECTED_IDS_FOR_PROCESS_ALL.contains(space.getId())) continue;
 
             processSpace(space);
         }
@@ -87,8 +80,9 @@ public class XWikiService {
      * – обходит все страницы,
      * – если есть вложенные пространства, обрабатывает их рекурсивно.
      */
-    private void processSpace(Space space) {
-        log.info("Обрабатываем пространство: {}", space.getId());
+    @Transactional
+    protected void processSpace(Space space) {
+        log.debug("Обрабатываем пространство: {}", space.getId());
         Optional<Link> pagesLinkOpt = space.getLinks().stream()
                 .filter(link -> "http://www.xwiki.org/rel/pages".equals(link.getRel()))
                 .findFirst();
@@ -124,14 +118,14 @@ public class XWikiService {
             return;
         }
 
-        log.info("Обработка страницы {} продолжается", page.getId());
+        log.debug("Обработка страницы {} продолжается", page.getId());
 
         Optional<Page> optPage = pageRepository.findByXwikiId(page.getId());
         if (optPage.isPresent()) {
-            log.info("Обновление страницы {}", page.getId());
+            log.debug("Обновление страницы {}", page.getId());
             updatePageAndEmbeddings(page, optPage.get());
         } else {
-            log.info("Создание страницы {}", page.getId());
+            log.debug("Создание страницы {}", page.getId());
             createNewPageAndEmbeddings(page);
         }
     }
@@ -147,7 +141,7 @@ public class XWikiService {
         newPage.setXwikiVersion(page.getVersion());
         newPage.setXwikiAbsoluteUrl(page.getXwikiAbsoluteUrl());
         Page savedPage = pageRepository.save(newPage);
-        log.info("Страница сохранена с идентификатором {}.", savedPage.getId());
+        log.debug("Страница сохранена с идентификатором {}.", savedPage.getId());
 
         // Получение подробностей страницы
         Optional<Link> detailLinkOpt = page.getLinks().stream()
@@ -181,18 +175,18 @@ public class XWikiService {
         existingPage.setXwikiVersion(page.getVersion());
         existingPage.setXwikiAbsoluteUrl(page.getXwikiAbsoluteUrl());
         Page updatedPage = pageRepository.save(existingPage);
-        log.info("Страница {} обновлена.", updatedPage.getId());
+        log.debug("Страница {} обновлена.", updatedPage.getId());
 
         // Удаляем старые эмбеддинги, привязанные к чанкам данной страницы
         String deleteEmbeddingsSql = "DELETE FROM embeddings WHERE chunk_id IN (SELECT id FROM chunks WHERE page_id = ?)";
         jdbcTemplate.update(deleteEmbeddingsSql, updatedPage.getId());
-        log.info("Удалены старые эмбеддинги для страницы {}.", updatedPage.getId());
+        log.debug("Удалены старые эмбеддинги для страницы {}.", updatedPage.getId());
 
         // Удаляем старые чанки через JPA-репозиторий
         List<Chunk> chunksToDelete = chunkRepository.findByPage(updatedPage);
         if (!chunksToDelete.isEmpty()) {
             chunkRepository.deleteAll(chunksToDelete);
-            log.info("Удалены старые чанки для страницы {}.", updatedPage.getId());
+            log.debug("Удалены старые чанки для страницы {}.", updatedPage.getId());
         }
 
         // Получаем подробности страницы
@@ -323,14 +317,120 @@ public class XWikiService {
         try {
             dbWikiVersion = jdbcTemplate.queryForObject(checkSql, String.class, page.getId());
         } catch (EmptyResultDataAccessException e) {
-            log.info("Запись для страницы {} не найдена в таблице pages. Продолжаем обработку.", page.getId());
+            log.debug("Запись для страницы {} не найдена в таблице pages. Продолжаем обработку.", page.getId());
         }
 
         if (dbWikiVersion != null && dbWikiVersion.equals(page.getVersion())) {
-            log.info("Для страницы {} версия {} уже актуальна в базе. Пропускаем обработку.", page.getId(), page.getVersion());
+            log.debug("Для страницы {} версия {} уже актуальна в базе. Пропускаем обработку.", page.getId(), page.getVersion());
             return true;
         }
         return false;
+    }
+
+    /**
+     * Выполняет поиск по базе знаний с использованием новой схемы (pages, chunks, embeddings).
+     * Для каждого embedding-моделя генерируется вектор запроса, после чего выполняется динамический SQL‑запрос
+     * для получения top релевантных результатов.
+     *
+     * @param query текст поискового запроса
+     * @param limit максимальное количество результатов для каждой модели
+     * @return объединённый список DTO DocumentEmbeddingDto найденных документов
+     */
+    public List<DocumentEmbeddingDto> search(String query, int limit) {
+        // Нормализуем входной запрос
+        String normalizedQuery = contentNormalizationService.normalize(query);
+
+        // 1. Для каждого embedding-моделя создаем вектор запроса
+        // Ключ: имя модели, значение: PGvector запроса, полученного с помощью llamaAiClient.getEmbeddings
+        Map<String, PGvector> queryVectors = new HashMap<>();
+        for (EmbeddingModelConfigRecord modelConfig : modelsProperties.embeddingModels()) {
+            String modelName = modelConfig.model();
+            try {
+                EmbeddingResponse embeddingResponse = llamaAiClient.getEmbeddings(normalizedQuery, modelName);
+                List<Embedding> results = embeddingResponse.getResults();
+                if (results == null || results.isEmpty()) {
+                    log.warn("Не удалось получить эмбеддинг для запроса '{}' с моделью {}", query, modelName);
+                    continue;
+                }
+                // Берем первый эмбеддинг
+                Embedding embedding = results.getFirst();
+                List<Double> output = embedding.getOutput();
+                float[] vector = new float[output.size()];
+                for (int i = 0; i < output.size(); i++) {
+                    vector[i] = output.get(i).floatValue();
+                }
+                float[] normalizedVector = normalizeVector(vector);
+                PGvector queryVector = new PGvector(normalizedVector);
+                queryVectors.put(modelName, queryVector);
+            } catch (Exception ex) {
+                log.error("Ошибка генерации эмбеддинга для модели {} при поиске запроса '{}'", modelName, query, ex);
+            }
+        }
+
+        // 2. Для каждого embedding-моделя выполняем запрос к новым таблицам
+        // Используем динамическое имя колонки, вычисляемое по модели: [modelName] -> заменяем не-латинские/цифровые символы на _
+        String sqlTemplate = "SELECT p.xwiki_id, c.chunk_index, e.%s AS embedding, c.text_snippet, " +
+                "       e.%s <-> ? AS distance " +
+                "FROM pages p " +
+                "JOIN chunks c ON c.page_id = p.id " +
+                "JOIN embeddings e ON e.chunk_id = c.id " +
+                "ORDER BY distance ASC " +
+                "LIMIT ?";
+
+        List<DocumentEmbeddingDto> combinedResults = new ArrayList<>();
+
+        for (Map.Entry<String, PGvector> entry : queryVectors.entrySet()) {
+            String modelName = entry.getKey();
+            PGvector queryVector = entry.getValue();
+
+            // Вычисляем динамическое имя колонки, например: qllama/multilingual-e5-base -> qllama_multilingual_e5_base_embedding
+            String columnName = modelName.replaceAll("[^A-Za-z0-9]", "_") + "_embedding";
+            String sql = String.format(sqlTemplate, columnName, columnName);
+
+            List<DocumentEmbeddingDto> modelResults = jdbcTemplate.query(
+                    sql,
+                    (rs, rowNum) -> {
+                        // Извлекаем xwikiId и chunk_index из таблицы pages и chunks
+                        String xwikiId = rs.getString("xwiki_id");
+                        int chunkIndex = rs.getInt("chunk_index");
+
+                        // Читаем значение эмбеддинга, преобразуя объект в PGvector
+                        Object embeddingObj = rs.getObject("embedding");
+                        PGvector embeddingVector;
+                        if (embeddingObj instanceof PGvector) {
+                            embeddingVector = (PGvector) embeddingObj;
+                        } else if (embeddingObj instanceof org.postgresql.util.PGobject pgObj) {
+                            embeddingVector = new PGvector(pgObj.getValue());
+                        } else {
+                            throw new IllegalStateException("Невозможно преобразовать объект "
+                                    + embeddingObj.getClass() + " в PGvector");
+                        }
+
+                        String textSnippet = rs.getString("text_snippet");
+                        double distance = rs.getDouble("distance");
+                        return new DocumentEmbeddingDto(xwikiId, chunkIndex, embeddingVector, textSnippet, distance);
+                    },
+                    queryVector, limit
+            );
+
+            combinedResults.addAll(modelResults);
+            modelResults.forEach(dto ->
+                    log.info("Найден документ {} с расстоянием {} для модели {}",
+                            dto.getXwikiId(), dto.getDistance(), modelName)
+            );
+        }
+
+        // 3. Сортируем объединенный список результатов по возрастанию расстояния
+        combinedResults.sort(Comparator.comparingDouble(DocumentEmbeddingDto::getDistance));
+
+        // При необходимости расширяем текстовый фрагмент (например, добавляем контекст)
+        combinedResults.forEach(dto -> dto.setTextSnippet(getExtendedTextSnippet(dto)));
+
+        return combinedResults;
+    }
+
+    private String getExtendedTextSnippet(DocumentEmbeddingDto dto) {
+        return dto.getTextSnippet();
     }
 
 }

@@ -1,6 +1,6 @@
-package ru.cbgr.adapter.xwiki.controller;
+package ru.cbgr.adapter.xwiki.controller.models;
 
-import org.springframework.ai.embedding.EmbeddingResponse;
+import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -12,14 +12,14 @@ import ru.cbgr.adapter.xwiki.client.LlamaAiClient;
 import lombok.RequiredArgsConstructor;
 
 @RestController
-@RequestMapping("/api/embedding")
+@RequestMapping("/api/chat")
 @RequiredArgsConstructor
-public class EmbeddingController {
+public class LLMController {
 
     private final LlamaAiClient llamaAiClient;
 
     @GetMapping
-    public ResponseEntity<EmbeddingResponse> embed(@RequestParam(value = "message") String message) {
-        return ResponseEntity.ok(llamaAiClient.getEmbeddings(message, LlamaAiClient.EMBEDDING_MODEL));
+    public ResponseEntity<ChatResponse> chat(@RequestParam(value = "message") String promptMessage) {
+        return ResponseEntity.ok(llamaAiClient.generateResult(promptMessage));
     }
 }

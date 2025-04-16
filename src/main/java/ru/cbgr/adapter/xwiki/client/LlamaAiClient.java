@@ -1,6 +1,5 @@
 package ru.cbgr.adapter.xwiki.client;
 
-import java.util.ArrayList;
 import java.util.List;
 
 import org.springframework.ai.chat.model.ChatResponse;
@@ -12,82 +11,43 @@ import org.springframework.ai.ollama.OllamaEmbeddingModel;
 import org.springframework.ai.ollama.api.OllamaOptions;
 import org.springframework.stereotype.Service;
 
+import ru.cbgr.adapter.xwiki.configuration.properties.ModelsProperties;
+
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 @Service
 @RequiredArgsConstructor
 @Slf4j
-public class LlamaAiClient { // todo Добавить мапперы
-
-    public static final String EMBEDDING_MODEL = "qllama/multilingual-e5-base";
-    public static final String LLM_CHAT_MODEL = "ilyagusev/saiga_llama3";
+public class LlamaAiClient {
 
     private final OllamaChatModel chatModel;
     private final OllamaEmbeddingModel embeddingModel;
 
-    /**
-     * Отправка запроса в большую языковую модель /api/chat
-     * @param prompt Сообщение (запрос) в LLM
-     * @return Ответ от LLM
-     */
+    private final ModelsProperties properties;
+
     public ChatResponse generateResult(String prompt) {
         ChatResponse response = chatModel.call(
                 new Prompt(
                         prompt,
                         OllamaOptions.create()
-                                .withModel(LLM_CHAT_MODEL)
+                                .withModel(properties.llmModel())
                 ));
 
         return response;
     }
 
-    /**
-     * Получение embedding`ов для входящего текста (векторов текста)
-     * @param message Входные данные
-     * @return EmbeddingResponse с векторами текста
-     */
-    public EmbeddingResponse getEmbeddings(String message, String modelName) {
-        log.info("Get embeddings for: {}", message);
-        if (message == null || message.isEmpty()) {
-            throw new IllegalArgumentException("Входное сообщение не должно быть пустым.");
+    public EmbeddingResponse getEmbeddings(String chunk, String modelName) {
+        log.debug("Получение векторов для: {}", chunk);
+        if (chunk == null || chunk.isEmpty()) {
+            throw new IllegalArgumentException("Входной chunk не должен быть пустым.");
         }
 
-        final int MAX_CHUNK_SIZE = 2048; // максимальное количество символов в одном куске, которое может воспринять LLM
-        List<String> chunks = getChunks(message, MAX_CHUNK_SIZE);
-
-        // Формируем запрос на эмбеддинг, передавая список кусочков сообщения и указывая нужную модель
         EmbeddingRequest request = new EmbeddingRequest(
-                chunks,
+                List.of(chunk),
                 OllamaOptions.create().withModel(modelName)
         );
 
-        // Вызываем модель для получения эмбеддингов и возвращаем ответ
         return embeddingModel.call(request);
     }
-
-    private List<String> getChunks(String message, int MAX_CHUNK_SIZE) {
-        List<String> chunks = new ArrayList<>();
-        int start = 0;
-
-        // Разбиваем текст на куски, не разрывая слово (по возможности)
-        while (start < message.length()) {
-            int end = Math.min(start + MAX_CHUNK_SIZE, message.length());
-
-            // Если мы не достигли конца текста, попробуем найти последний пробел в пределах лимита,
-            // чтобы не разрывать слово
-            if (end < message.length()) {
-                int lastSpace = message.lastIndexOf(" ", end);
-                if (lastSpace > start) {
-                    end = lastSpace;
-                }
-            }
-
-            String chunk = message.substring(start, end);
-            chunks.add(chunk);
-            start = end;
-        }
-        return chunks;
-    }
-
 }
