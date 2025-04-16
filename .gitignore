@@ -13,6 +13,9 @@ target/
 .springBeans
 .sts4-cache
 
+src/main/java/ru/cbgr/adapter/rtos
+src/test/java/ru/cbgr/adapter/rtos
+
 ### IntelliJ IDEA ###
 .idea
 *.iws

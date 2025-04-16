@@ -20,7 +20,8 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 public class LlamaAiClient { // todo Добавить мапперы
 
-    public static final String MODEL_VERSION = "qllama/multilingual-e5-base";
+    public static final String EMBEDDING_MODEL = "qllama/multilingual-e5-base";
+    public static final String LLM_CHAT_MODEL = "ilyagusev/saiga_llama3";
 
     private final OllamaChatModel chatModel;
     private final OllamaEmbeddingModel embeddingModel;
@@ -35,7 +36,7 @@ public class LlamaAiClient { // todo Добавить мапперы
                 new Prompt(
                         prompt,
                         OllamaOptions.create()
-                                .withModel(MODEL_VERSION)
+                                .withModel(LLM_CHAT_MODEL)
                 ));
 
         return response;
@@ -58,7 +59,7 @@ public class LlamaAiClient { // todo Добавить мапперы
         // Формируем запрос на эмбеддинг, передавая список кусочков сообщения и указывая нужную модель
         EmbeddingRequest request = new EmbeddingRequest(
                 chunks,
-                OllamaOptions.create().withModel(MODEL_VERSION)
+                OllamaOptions.create().withModel(EMBEDDING_MODEL)
         );
 
         // Вызываем модель для получения эмбеддингов и возвращаем ответ
