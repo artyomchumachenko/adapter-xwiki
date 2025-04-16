@@ -40,7 +40,7 @@ public class SearchService {
     public List<DocumentEmbeddingDto> search(String query, int limit) {
         // Получаем эмбеддинг запроса через LlamaAiService
         EmbeddingResponse embeddingResponse = llamaAiClient.getEmbeddings(
-                contentNormalizationService.normalize(query));
+                contentNormalizationService.normalize(query), LlamaAiClient.EMBEDDING_MODEL);
         List<Embedding> embeddings = embeddingResponse.getResults();
         if (embeddings == null || embeddings.isEmpty()) {
             log.warn("Не удалось получить эмбеддинг для запроса: {}", query);

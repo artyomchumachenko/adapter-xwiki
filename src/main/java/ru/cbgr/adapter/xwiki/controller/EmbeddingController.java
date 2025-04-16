@@ -20,6 +20,6 @@ public class EmbeddingController {
 
     @GetMapping
     public ResponseEntity<EmbeddingResponse> embed(@RequestParam(value = "message") String message) {
-        return ResponseEntity.ok(llamaAiClient.getEmbeddings(message));
+        return ResponseEntity.ok(llamaAiClient.getEmbeddings(message, LlamaAiClient.EMBEDDING_MODEL));
     }
 }

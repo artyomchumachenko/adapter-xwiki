@@ -5,7 +5,7 @@ create table if not exists pages (
     sys_create_date timestamp default now(),     -- дата создания записи
     sys_update_date timestamp default now(),     -- дата последнего обновления записи
     xwiki_id varchar(300) not null,              -- идентификатор в XWiki
-    xwiki_version int,                           -- версия документа в XWiki
+    xwiki_version varchar(10) not null,         -- версия документа в XWiki
     xwiki_absolute_url text                      -- абсолютный URL документа в XWiki
     );
 

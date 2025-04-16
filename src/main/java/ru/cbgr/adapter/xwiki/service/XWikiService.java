@@ -1,5 +1,6 @@
 package ru.cbgr.adapter.xwiki.service;
 
+import java.sql.PreparedStatement;
 import java.util.List;
 import java.util.Optional;
 
@@ -7,12 +8,17 @@ import com.pgvector.PGvector;
 
 import org.springframework.ai.embedding.Embedding;
 import org.springframework.ai.embedding.EmbeddingResponse;
+import org.springframework.dao.EmptyResultDataAccessException;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.jdbc.support.GeneratedKeyHolder;
+import org.springframework.jdbc.support.KeyHolder;
 import org.springframework.stereotype.Service;
 
 import ru.cbgr.adapter.xwiki.chunker.CombinedContentChunker;
 import ru.cbgr.adapter.xwiki.client.LlamaAiClient;
 import ru.cbgr.adapter.xwiki.client.XWikiClient;
+import ru.cbgr.adapter.xwiki.configuration.properties.EmbeddingModelConfigRecord;
+import ru.cbgr.adapter.xwiki.configuration.properties.ModelsProperties;
 import ru.cbgr.adapter.xwiki.dto.xwiki.ModificationsResponse;
 import ru.cbgr.adapter.xwiki.dto.xwiki.PagesResponse;
 import ru.cbgr.adapter.xwiki.dto.xwiki.SpacesResponse;
@@ -20,14 +26,19 @@ import ru.cbgr.adapter.xwiki.dto.xwiki.modifications.Link;
 import ru.cbgr.adapter.xwiki.dto.xwiki.page.PageDetails;
 import ru.cbgr.adapter.xwiki.dto.xwiki.page.PageSummary;
 import ru.cbgr.adapter.xwiki.dto.xwiki.space.Space;
+import ru.cbgr.adapter.xwiki.model.Chunk;
+import ru.cbgr.adapter.xwiki.model.Page;
+import ru.cbgr.adapter.xwiki.repository.ChunkRepository;
+import ru.cbgr.adapter.xwiki.repository.PageRepository;
 
+import jakarta.transaction.Transactional;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
 @Service
 @Slf4j
 @RequiredArgsConstructor
-public class XWikiService { // todo Добавить мапперы
+public class XWikiService {
 
     private static final List<String> EXPECTED_IDS_FOR_PROCESS_ALL = List.of(
             "xwiki:Дивизион разработки.MDM.Системный анализ.Макеты страницы \"Группы пользователей\""
@@ -37,10 +48,14 @@ public class XWikiService { // todo Добавить мапперы
     private final XWikiClient xWikiClient;
     private final ContentNormalizationService contentNormalizationService;
     private final LlamaAiClient llamaAiClient;
+    private final PageRepository pageRepository;
+    private final ChunkRepository chunkRepository;
 
     private final JdbcTemplate jdbcTemplate;
 
     private final CombinedContentChunker chunker;
+
+    private final ModelsProperties modelsProperties;
 
     public ModificationsResponse getModifications() {
         return xWikiClient.getModifications();
@@ -99,81 +114,178 @@ public class XWikiService { // todo Добавить мапперы
     }
 
     /**
-     * Обрабатывает страницу:
-     * – получает подробную информацию о странице в виде объекта PageDetails,
-     * – извлекает только поле content,
-     * – нормализует текст,
-     * – генерирует эмбеддинг,
-     * – нормализует эмбеддинг и сохраняет его с метаданными в таблицу document_embeddings.
+     * Основной метод обработки страницы.
+     * Если страница уже существует, вызывается updatePageAndEmbeddings,
+     * иначе создаётся новая страница через createNewPageAndEmbeddings.
      */
-    private void processPage(PageSummary page) {
-        // переделать миграцию для векторной БД
-        // для xwiki храним version для проверки актуальности
-
-        // Проверяем, есть ли уже данные для данного документа в базе todo Сделать более красивую реализацию
-        String checkSql = "SELECT count(*) FROM document_embeddings WHERE document_id = ?";
-        Integer count = jdbcTemplate.queryForObject(checkSql, Integer.class, page.getId());
-        if (count != null && count > 0) {
-            log.info("Для страницы {} уже существует информация в базе данных. Пропускаем обработку.", page.getId());
+    @Transactional
+    protected void processPage(PageSummary page) {
+        if (isSkipProcess(page)) {
             return;
         }
 
-        log.info("Обрабатываем страницу: {}", page.getId());
+        log.info("Обработка страницы {} продолжается", page.getId());
 
+        Optional<Page> optPage = pageRepository.findByXwikiId(page.getId());
+        if (optPage.isPresent()) {
+            log.info("Обновление страницы {}", page.getId());
+            updatePageAndEmbeddings(page, optPage.get());
+        } else {
+            log.info("Создание страницы {}", page.getId());
+            createNewPageAndEmbeddings(page);
+        }
+    }
+
+    /**
+     * Создает новую страницу и связанные с ней данные (чанки и эмбеддинги).
+     */
+    @Transactional
+    protected void createNewPageAndEmbeddings(PageSummary page) {
+        // Создание и сохранение объекта Page через JPA
+        Page newPage = new Page();
+        newPage.setXwikiId(page.getId());
+        newPage.setXwikiVersion(page.getVersion());
+        newPage.setXwikiAbsoluteUrl(page.getXwikiAbsoluteUrl());
+        Page savedPage = pageRepository.save(newPage);
+        log.info("Страница сохранена с идентификатором {}.", savedPage.getId());
+
+        // Получение подробностей страницы
         Optional<Link> detailLinkOpt = page.getLinks().stream()
                 .filter(link -> "http://www.xwiki.org/rel/page".equals(link.getRel()))
                 .findFirst();
-
         if (detailLinkOpt.isEmpty()) {
             log.warn("Не найдена ссылка для получения подробной информации для страницы: {}", page.getId());
             return;
         }
-
-        // Используем полученный URL напрямую, без дополнительного кодирования
         String detailUrl = detailLinkOpt.get().getHref();
         log.debug("Получаем данные страницы по URL: {}", detailUrl);
 
-        // Получаем подробности страницы, где содержится поле content
         PageDetails pageDetails = xWikiClient.getPageDetails(detailUrl);
         if (pageDetails == null || pageDetails.getContent() == null || pageDetails.getContent().isEmpty()) {
             log.warn("Поле content пустое для страницы: {}", page.getId());
             return;
         }
-
         String content = pageDetails.getContent();
         List<String> chunks = chunker.chunkContent(content, 1500, 3, 10);
 
-        // Обработка каждого чанка с учётом индекса чанка
-        for (int i = 0; i < chunks.size(); i++) {
-            String chunk = chunks.get(i);
-            // Нормализуем чанк
-            String normalizedChunk = contentNormalizationService.normalize(chunk);
-            if (normalizedChunk.isEmpty()) continue;
+        processChunks(savedPage, chunks);
+    }
 
-            // Генерируем эмбеддинг для нормализованного текста
-            EmbeddingResponse embeddingResponse;
-            try {
-                embeddingResponse = llamaAiClient.getEmbeddings(normalizedChunk);
-            } catch (Exception ex) {
-                log.error("Skip chunk with: {}", normalizedChunk);
+    /**
+     * Обновляет страницу: удаляются старые чанки и эмбеддинги,
+     * затем сохраняются новые данные из полученного контента.
+     */
+    @Transactional
+    protected void updatePageAndEmbeddings(PageSummary page, Page existingPage) {
+        // Обновляем информацию по странице
+        existingPage.setXwikiVersion(page.getVersion());
+        existingPage.setXwikiAbsoluteUrl(page.getXwikiAbsoluteUrl());
+        Page updatedPage = pageRepository.save(existingPage);
+        log.info("Страница {} обновлена.", updatedPage.getId());
+
+        // Удаляем старые эмбеддинги, привязанные к чанкам данной страницы
+        String deleteEmbeddingsSql = "DELETE FROM embeddings WHERE chunk_id IN (SELECT id FROM chunks WHERE page_id = ?)";
+        jdbcTemplate.update(deleteEmbeddingsSql, updatedPage.getId());
+        log.info("Удалены старые эмбеддинги для страницы {}.", updatedPage.getId());
+
+        // Удаляем старые чанки через JPA-репозиторий
+        List<Chunk> chunksToDelete = chunkRepository.findByPage(updatedPage);
+        if (!chunksToDelete.isEmpty()) {
+            chunkRepository.deleteAll(chunksToDelete);
+            log.info("Удалены старые чанки для страницы {}.", updatedPage.getId());
+        }
+
+        // Получаем подробности страницы
+        Optional<Link> detailLinkOpt = page.getLinks().stream()
+                .filter(link -> "http://www.xwiki.org/rel/page".equals(link.getRel()))
+                .findFirst();
+        if (detailLinkOpt.isEmpty()) {
+            log.warn("Не найдена ссылка для получения подробной информации для страницы: {}", page.getId());
+            return;
+        }
+        String detailUrl = detailLinkOpt.get().getHref();
+        log.debug("Получаем данные страницы по URL: {}", detailUrl);
+
+        PageDetails pageDetails = xWikiClient.getPageDetails(detailUrl);
+        if (pageDetails == null || pageDetails.getContent() == null || pageDetails.getContent().isEmpty()) {
+            log.warn("Поле content пустое для страницы: {}", page.getId());
+            return;
+        }
+        String content = pageDetails.getContent();
+        List<String> chunks = chunker.chunkContent(content, 1500, 3, 10);
+
+        processChunks(updatedPage, chunks);
+    }
+
+    /**
+     * Общая логика сохранения чанков и эмбеддингов для страницы.
+     *
+     * @param page   объект страницы (уже сохраненный)
+     * @param chunks список строк-чанков контента
+     */
+    @Transactional
+    protected void processChunks(Page page, List<String> chunks) {
+        for (int i = 0; i < chunks.size(); i++) {
+            String rawChunk = chunks.get(i);
+            String normalizedChunk = contentNormalizationService.normalize(rawChunk);
+            if (normalizedChunk.isEmpty()) {
                 continue;
             }
-            List<Embedding> embeddings = embeddingResponse.getResults();
-            for (Embedding embedding : embeddings) {
+
+            // Сохраняем чанк в таблицу chunks через JPA
+            Chunk newChunk = new Chunk();
+            newChunk.setPage(page);
+            newChunk.setChunkIndex(i);
+            newChunk.setTextSnippet(normalizedChunk);
+            Chunk savedChunk = chunkRepository.save(newChunk);
+            log.debug("Чанк с индексом {} сохранён с идентификатором {}.", i, savedChunk.getId());
+
+            // Создаем запись в таблице embeddings (нативно) для данного чанка
+            String insertEmbeddingSql = "INSERT INTO embeddings (chunk_id) VALUES (?)";
+            KeyHolder embeddingKeyHolder = new GeneratedKeyHolder();
+            jdbcTemplate.update(connection -> {
+                PreparedStatement ps = connection.prepareStatement(insertEmbeddingSql, new String[]{"id"});
+                ps.setLong(1, savedChunk.getId());
+                return ps;
+            }, embeddingKeyHolder);
+            Number embeddingId = embeddingKeyHolder.getKey();
+            if (embeddingId == null) {
+                log.error("Не удалось создать запись в embeddings для chunk_id {}", savedChunk.getId());
+                continue;
+            }
+
+            // Для каждой embedding-модели из настроек
+            for (EmbeddingModelConfigRecord modelConfig : modelsProperties.embeddingModels()) {
+                String modelName = modelConfig.model();
+                EmbeddingResponse embeddingResponse;
+                try {
+                    // Генерируем эмбеддинг для нормализованного текста, передавая имя модели
+                    embeddingResponse = llamaAiClient.getEmbeddings(normalizedChunk, modelName);
+                } catch (Exception ex) {
+                    log.error("Ошибка генерации эмбеддинга для модели {} для чанка: {}", modelName, normalizedChunk, ex);
+                    continue;
+                }
+                List<Embedding> embeddingResults = embeddingResponse.getResults();
+                if (embeddingResults == null || embeddingResults.isEmpty()) {
+                    log.warn("Эмбеддинг не получен для модели {} для чанка: {}", modelName, normalizedChunk);
+                    continue;
+                }
+
+                // Используем первый результат эмбеддинга
+                Embedding embedding = embeddingResults.get(0); // или embeddingResults.getFirst(), если используется соответствующий метод
                 List<Double> output = embedding.getOutput();
                 float[] vector = new float[output.size()];
                 for (int j = 0; j < output.size(); j++) {
                     vector[j] = output.get(j).floatValue();
                 }
-                // Нормализуем вектор
                 float[] normalizedVector = normalizeVector(vector);
-                // Создаем объект PGvector для хранения в БД
                 PGvector pgVector = new PGvector(normalizedVector);
 
-                // Сохраняем эмбеддинг в таблицу document_embeddings
-                String sql = "INSERT INTO document_embeddings (document_id, chunk_index, embedding, text_snippet) VALUES (?, ?, ?, ?)";
-                // Здесь предполагается, что page.getId() возвращает идентификатор документа.
-                jdbcTemplate.update(sql, page.getId(), i, pgVector, normalizedChunk);
+                // Вычисляем имя динамической колонки: заменяем все символы, не являющиеся цифрами или латинскими буквами, на нижнее подчёркивание, затем добавляем суффикс _embedding
+                String columnName = modelName.replaceAll("[^A-Za-z0-9]", "_") + "_embedding";
+                String updateSql = "UPDATE embeddings SET " + columnName + " = ? WHERE id = ?";
+                jdbcTemplate.update(updateSql, pgVector, embeddingId.longValue());
+                log.debug("Эмбеддинг для модели {} сохранён в колонку {} для embedding_id {}.", modelName, columnName, embeddingId);
             }
         }
     }
@@ -196,6 +308,29 @@ public class XWikiService { // todo Добавить мапперы
             normalized[i] = vector[i] / (float) norm;
         }
         return normalized;
+    }
+
+    /**
+     * Проверяет, следует ли пропустить обработку для указанной страницы.
+     * Производится запрос по xwiki_id в таблице pages и сравнение версии.
+     *
+     * @param page объект страницы, содержащий getId() и getVersion()
+     * @return true если версия в базе совпадает с версией страницы, false если запись не найдена или версии отличаются
+     */
+    public boolean isSkipProcess(PageSummary page) {
+        String checkSql = "SELECT xwiki_version FROM pages WHERE xwiki_id = ?";
+        String dbWikiVersion = null;
+        try {
+            dbWikiVersion = jdbcTemplate.queryForObject(checkSql, String.class, page.getId());
+        } catch (EmptyResultDataAccessException e) {
+            log.info("Запись для страницы {} не найдена в таблице pages. Продолжаем обработку.", page.getId());
+        }
+
+        if (dbWikiVersion != null && dbWikiVersion.equals(page.getVersion())) {
+            log.info("Для страницы {} версия {} уже актуальна в базе. Пропускаем обработку.", page.getId(), page.getVersion());
+            return true;
+        }
+        return false;
     }
 
 }

@@ -47,7 +47,7 @@ public class LlamaAiClient { // todo Добавить мапперы
      * @param message Входные данные
      * @return EmbeddingResponse с векторами текста
      */
-    public EmbeddingResponse getEmbeddings(String message) {
+    public EmbeddingResponse getEmbeddings(String message, String modelName) {
         log.info("Get embeddings for: {}", message);
         if (message == null || message.isEmpty()) {
             throw new IllegalArgumentException("Входное сообщение не должно быть пустым.");
@@ -59,7 +59,7 @@ public class LlamaAiClient { // todo Добавить мапперы
         // Формируем запрос на эмбеддинг, передавая список кусочков сообщения и указывая нужную модель
         EmbeddingRequest request = new EmbeddingRequest(
                 chunks,
-                OllamaOptions.create().withModel(EMBEDDING_MODEL)
+                OllamaOptions.create().withModel(modelName)
         );
 
         // Вызываем модель для получения эмбеддингов и возвращаем ответ
