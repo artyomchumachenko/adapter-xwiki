@@ -1,106 +1,97 @@
 package ru.cbgr.adapter.xwiki.chunker;
 
+import lombok.extern.slf4j.Slf4j;
+
 import java.text.BreakIterator;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 
-import lombok.extern.slf4j.Slf4j;
-
+/** Делит текст на чёткие чанки по предложениям/абзацам. */
 @Slf4j
 public class TextChunker {
 
-    /**
-     * Разбивает контент на чанки с учётом заголовков и ограничений по размеру.
-     *
-     * @param content          Исходный текст.
-     * @param maxChunkSize     Максимальное число символов в чанке.
-     * @param overlapSentences Количество предложений для перекрытия между чанками.
-     * @return Список текстовых чанков.
-     */
-    public List<String> chunkText(String content, int maxChunkSize, int overlapSentences) {
-        // Сначала разбиваем на разделы по заголовкам
+    private final int target;
+    private final int tolerance;
+    private final int overlapSent;
+
+    public TextChunker(int targetSize, int tolerance, int overlapSent) {
+        this.target = targetSize;
+        this.tolerance = tolerance;
+        this.overlapSent = overlapSent;
+    }
+
+    public List<String> chunkText(String content) {
+        // Сначала режем по верхнеуровневым заголовкам, чтобы не рвать большие блоки
         List<String> sections = splitByHeaders(content);
-        List<String> chunks = new ArrayList<>();
+        List<String> out = new ArrayList<>();
 
         for (String section : sections) {
-            if (section.length() <= maxChunkSize) {
-                chunks.add(section);
+            if (fits(section)) {
+                out.add(section);
             } else {
-                // Если раздел слишком длинный, делим его на чанки по предложениям с оптимизированной реализацией
-                List<String> sectionChunks = chunkSectionBySentencesOptimized(section, maxChunkSize, overlapSentences);
-                chunks.addAll(sectionChunks);
+                out.addAll(sliceBySentences(section));
             }
         }
-        return chunks;
+        return out;
     }
 
-    /**
-     * Разбивает контент на разделы по строкам, начинающимся с маркеров заголовков.
-     *
-     * @param content Исходный текст.
-     * @return Список разделов.
-     */
-    private List<String> splitByHeaders(String content) {
-        List<String> sections = new ArrayList<>();
-        String[] lines = content.split("\\r?\\n");
-        StringBuilder currentSection = new StringBuilder();
+    /* ——— private ——— */
 
-        for (String line : lines) {
-            // Если строка начинается с типичного заголовка ("**" или "==")
-            if (line.trim().startsWith("**") || line.trim().startsWith("==")) {
-                if (!currentSection.isEmpty()) {
-                    sections.add(currentSection.toString().trim());
-                    currentSection.setLength(0);
+    /** true, если строка «в диапазоне» [target - tol ; target + tol] */
+    private boolean fits(String s) {
+        int len = s.length();
+        return len >= target - tolerance && len <= target + tolerance;
+    }
+
+    private List<String> splitByHeaders(String text) {
+        List<String> res = new ArrayList<>();
+        StringBuilder buf = new StringBuilder();
+
+        for (String line : text.split("\\R")) {
+            if (isHeader(line)) {
+                if (!buf.isEmpty()) {
+                    res.add(buf.toString().strip());
+                    buf.setLength(0);
                 }
             }
-            currentSection.append(line).append("\n");
+            buf.append(line).append('\n');
         }
-        if (!currentSection.isEmpty()) {
-            sections.add(currentSection.toString().trim());
-        }
-        return sections;
+        if (!buf.isEmpty()) res.add(buf.toString().strip());
+        return res;
     }
 
-    /**
-     * Оптимизированное разбиение длинного раздела на чанки по предложениям с учетом перекрытия.
-     * Вместо предварительного создания списка строк-предложений формируем список границ предложений.
-     *
-     * @param text             Текст раздела.
-     * @param maxChunkSize     Максимальное число символов в чанке.
-     * @param overlapSentences Количество предложений для перекрытия между чанками.
-     * @return Список чанков раздела.
-     */
-    private List<String> chunkSectionBySentencesOptimized(String text, int maxChunkSize, int overlapSentences) {
-        List<String> chunks = new ArrayList<>();
+    private boolean isHeader(String line) {
+        String t = line.strip();
+        return t.startsWith("**") || t.startsWith("==");
+    }
 
-        // Используем BreakIterator для определения границ предложений без создания отдельной строки для каждого предложения
-        BreakIterator iterator = BreakIterator.getSentenceInstance(new Locale("ru"));
-        iterator.setText(text);
-        int start = iterator.first();
-        List<Integer> boundaries = new ArrayList<>();
-        boundaries.add(start);
-        int end = iterator.next();
-        while (end != BreakIterator.DONE) {
-            boundaries.add(end);
-            end = iterator.next();
-        }
+    /** Скользящее окно предложений до «идеального» размера. */
+    private List<String> sliceBySentences(String text) {
+        List<String> res = new ArrayList<>();
+        BreakIterator it = BreakIterator.getSentenceInstance(new Locale("ru"));
+        it.setText(text);
 
-        int sentenceCount = boundaries.size() - 1;
-        int sentenceIndex = 0;
-        while (sentenceIndex < sentenceCount) {
-            int chunkStart = boundaries.get(sentenceIndex);
-            int lastSentence = sentenceIndex;
-            // Находим, сколько предложений можно добавить, не превышая maxChunkSize
-            while (lastSentence + 1 < sentenceCount && (boundaries.get(lastSentence + 1) - chunkStart) <= maxChunkSize) {
-                lastSentence++;
+        List<Integer> bounds = new ArrayList<>();
+        for (int p = it.first(); p != BreakIterator.DONE; p = it.next()) bounds.add(p);
+
+        int sentCnt = bounds.size() - 1;
+        int idx = 0;
+        while (idx < sentCnt) {
+            int chunkStart = bounds.get(idx);
+            int last = idx;
+
+            // расширяемся, пока не превысим target+tolerance
+            while (last + 1 < sentCnt &&
+                    bounds.get(last + 1) - chunkStart <= target + tolerance) {
+                last++;
             }
-            // Формируем чанк, используя границы предложения
-            String chunk = text.substring(chunkStart, boundaries.get(lastSentence)).trim();
-            chunks.add(chunk);
-            // Сдвигаемся назад на overlapSentences для перекрытия между чанками
-            sentenceIndex = Math.max(sentenceIndex + 1, lastSentence - overlapSentences + 1);
+            // если всё ещё слишком маленький чанк – добавляем ещё предложение
+            if (bounds.get(last) - chunkStart < target - tolerance && last + 1 < sentCnt) last++;
+
+            res.add(text.substring(chunkStart, bounds.get(last)).strip());
+            idx = Math.max(idx + 1, last - overlapSent + 1);
         }
-        return chunks;
+        return res;
     }
 }

@@ -1,124 +1,85 @@
 package ru.cbgr.adapter.xwiki.chunker;
 
+import lombok.extern.slf4j.Slf4j;
+import org.springframework.stereotype.Component;
+
 import java.util.ArrayList;
 import java.util.List;
 
-import org.springframework.stereotype.Component;
-
-import lombok.extern.slf4j.Slf4j;
-
 /**
- * Комбинированный чанкер, который анализирует контент построчно.
- * Если найден блок таблицы (строки, начинающиеся с '|'), применяется TableChunker,
- * иначе – TextChunker.
+ * Комбинированный чанкер: текст / таблицы.
+ * Поддерживает «ровные» чанки ~TARGET_SIZE символов.
  */
 @Component
 @Slf4j
 public class CombinedContentChunker {
 
-    private final TableChunker tableChunker = new TableChunker();
-    private final TextChunker textChunker = new TextChunker();
+    /* ——— НАСТРОЙКИ ——— */
+    private static final int TARGET_SIZE          = 800; // оптимальный размер чанка
+    private static final int SIZE_TOLERANCE       = (int) (TARGET_SIZE * 0.15); // ±15 %
+    private static final int OVERLAP_SENT         = 2;   // перекрытие предложений
+    private static final int TABLE_MAX_ROWS       = 20;  // строк данных на чанк
+    private static final int MIN_TEXT_CHUNK_SIZE  = TARGET_SIZE / 2;
 
-    // Минимальный размер текстового чанка (в символах)
-    private static final int MIN_CHUNK_SIZE = 200;
+    private final TableChunker tableChunker = new TableChunker(TABLE_MAX_ROWS);
+    private final TextChunker  textChunker  = new TextChunker(TARGET_SIZE, SIZE_TOLERANCE, OVERLAP_SENT);
 
-    /**
-     * Разбивает исходный контент на чанки с учетом наличия таблиц.
-     *
-     * @param content          Исходный текст (включает таблицы и обычный текст).
-     * @param maxChunkSize     Максимальное число символов для текстовых чанков.
-     * @param overlapSentences Количество предложений для перекрытия между текстовыми чанками.
-     * @param tableMaxRows     Максимальное число строк данных в одном чанке таблицы (без заголовка).
-     * @return Список чанков.
-     */
-    public List<String> chunkContent(String content, int maxChunkSize, int overlapSentences, int tableMaxRows) {
+    /** Разбивает XWiki‑страницу на чанки, учитывая таблицы. */
+    public List<String> chunkContent(String content) {
         List<String> chunks = new ArrayList<>();
-        String[] lines = content.split("\\r?\\n");
+        String[] lines = content.split("\\R");          // любая новая строка
         StringBuilder segment = new StringBuilder();
-        Boolean currentIsTable = null; // null означает, что еще не определен тип
+        Boolean inTable = null;
 
-        for (String line : lines) {
-            // Определяем, является ли строка частью таблицы
-            boolean isTableLine = line.trim().startsWith("|");
-            if (currentIsTable == null) {
-                currentIsTable = isTableLine;
-            }
-            // Если тип строки отличается от текущего сегмента, завершаем сегмент и обрабатываем его
-            if (isTableLine != currentIsTable) {
-                processSegment(segment.toString(), currentIsTable, chunks, maxChunkSize, overlapSentences, tableMaxRows);
+        for (String raw : lines) {
+            boolean isTableLine = raw.trim().startsWith("|");
+            if (inTable == null) inTable = isTableLine;
+
+            if (isTableLine != inTable) {               // сменился режим
+                processSegment(segment.toString(), inTable, chunks);
                 segment.setLength(0);
-                currentIsTable = isTableLine;
+                inTable = isTableLine;
             }
-            segment.append(line).append("\n");
+            segment.append(raw).append('\n');
         }
-        // Обработка последнего сегмента
-        if (!segment.isEmpty() && currentIsTable != null) {
-            processSegment(segment.toString(), currentIsTable, chunks, maxChunkSize, overlapSentences, tableMaxRows);
-        }
+        if (!segment.isEmpty()) processSegment(segment.toString(), inTable, chunks);
+
         return chunks;
     }
 
-    /**
-     * Обрабатывает один сегмент текста в зависимости от его типа.
-     *
-     * @param segment          Текст сегмента.
-     * @param isTable          Если true, сегмент рассматривается как таблица.
-     * @param chunks           Список чанков, куда добавляются результаты.
-     * @param maxChunkSize     Максимальный размер текстового чанка.
-     * @param overlapSentences Число предложений для перекрытия в текстовом чанке.
-     * @param tableMaxRows     Максимальное число строк данных в чанке таблицы.
-     */
-    private void processSegment(String segment, boolean isTable, List<String> chunks,
-            int maxChunkSize, int overlapSentences, int tableMaxRows) {
-        String trimmed = segment.trim();
-        if (trimmed.isEmpty()) return;
+    /* ================================================================= */
+
+    private void processSegment(String segment, boolean isTable, List<String> out) {
+        segment = segment.strip();
+        if (segment.isEmpty()) return;
+
         if (isTable) {
-            // Обрабатываем как таблицу
-            List<String> tableChunks = tableChunker.chunkTable(trimmed, tableMaxRows);
-            chunks.addAll(tableChunks);
+            out.addAll(tableChunker.chunkTable(segment));
         } else {
-            // Обрабатываем как обычный текст
-            List<String> textChunks = textChunker.chunkText(trimmed, maxChunkSize, overlapSentences);
-            // Объединение текстовых чанков, если их длина меньше MIN_CHUNK_SIZE (800 символов)
-            List<String> mergedTextChunks = mergeSmallTextChunks(textChunks);
-            chunks.addAll(mergedTextChunks);
+            List<String> textChunks = textChunker.chunkText(segment);
+            out.addAll(mergeSmallTextChunks(textChunks));
         }
     }
 
-    /**
-     * Объединяет соседние текстовые чанки так, чтобы каждый имел не менее minChunkSize символов.
-     * Если длина текущего чанка меньше минимальной, из начала следующего чанка берется недостающая часть.
-     * Если следующий чанк целиком не умещается, то он делится: добавляется лишь необходимая часть,
-     * а остаток остается для дальнейшей обработки.
-     *
-     * @param chunks Список исходных текстовых чанков.
-     * @return Новый список чанков, удовлетворяющий условию минимальной длины.
-     */
-    private List<String> mergeSmallTextChunks(List<String> chunks) {
+    /** Склеиваем мелочь, чтобы не было очень коротких чанков (< MIN_TEXT_CHUNK_SIZE). */
+    private List<String> mergeSmallTextChunks(List<String> src) {
+        if (src.size() <= 1) return src;
+
         List<String> merged = new ArrayList<>();
-        int index = 0;
-        while (index < chunks.size()) {
-            // Начинаем новый чанк
-            StringBuilder currentChunk = new StringBuilder(chunks.get(index));
-            index++;
-            // Пока длина текущего чанка меньше требуемой и есть последующие чанки
-            while (currentChunk.length() < CombinedContentChunker.MIN_CHUNK_SIZE && index < chunks.size()) {
-                String nextChunk = chunks.get(index);
-                int needed = CombinedContentChunker.MIN_CHUNK_SIZE - currentChunk.length();
-                if (nextChunk.length() <= needed) {
-                    // Если следующий чанк целиком помещается, то добавляем его полностью
-                    currentChunk.append(" ").append(nextChunk);
-                    index++;
-                } else {
-                    // Если весь следующий чанк не помещается, добавляем нужную часть
-                    currentChunk.append(" ").append(nextChunk, 0, needed);
-                    // Обновляем следующий чанк оставшейся частью
-                    chunks.set(index, nextChunk.substring(needed));
-                    break; // Завершаем формирование текущего чанка
-                }
+        StringBuilder acc = new StringBuilder();
+
+        for (String part : src) {
+            if (acc.isEmpty()) {
+                acc.append(part);
+            } else if (acc.length() + 1 + part.length() < MIN_TEXT_CHUNK_SIZE) {
+                acc.append(' ').append(part);
+            } else {
+                merged.add(acc.toString());
+                acc.setLength(0);
+                acc.append(part);
             }
-            merged.add(currentChunk.toString());
         }
+        if (!acc.isEmpty()) merged.add(acc.toString());
         return merged;
     }
 }

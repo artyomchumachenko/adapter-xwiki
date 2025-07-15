@@ -163,7 +163,7 @@ public class XWikiService {
                 .map(xWikiClient::getPageDetails)
                 .map(PageDetails::getContent)
                 .filter(content -> content != null && !content.isBlank())
-                .map(content -> chunker.chunkContent(content, 1000, 3, 10))
+                .map(content -> chunker.chunkContent(content))
                 .orElse(List.of());
     }
 

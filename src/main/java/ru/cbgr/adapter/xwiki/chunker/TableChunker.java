@@ -1,47 +1,56 @@
 package ru.cbgr.adapter.xwiki.chunker;
 
+import lombok.extern.slf4j.Slf4j;
+
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 
-import lombok.extern.slf4j.Slf4j;
-
-/**
- * Чанкер для разбивки таблиц.
- */
+/** Делит wiki‑таблицу на порции с сохранением заголовка. */
 @Slf4j
 public class TableChunker {
 
-    /**
-     * Разбивает таблицу, заданную текстом, на чанки с указанным количеством строк.
-     * Заголовок таблицы (первая строка) включается в каждый чанк.
-     *
-     * @param tableText       Полный текст таблицы.
-     * @param maxRowsPerChunk Максимальное число строк (без учёта заголовка) в одном чанке.
-     * @return Список чанков, каждый из которых содержит заголовок и группу строк.
-     */
-    public List<String> chunkTable(String tableText, int maxRowsPerChunk) {
-        List<String> chunks = new ArrayList<>();
-        // Разбиваем таблицу на строки
-        List<String> lines = new ArrayList<>(Arrays.asList(tableText.split("\\r?\\n")));
-        if (lines.isEmpty()) {
-            return chunks;
-        }
-        // Первая строка считается заголовком
-        String header = lines.getFirst();
-        // Остальные строки – данные таблицы
-        List<String> dataRows = lines.subList(1, lines.size());
-        for (int i = 0; i < dataRows.size(); i += maxRowsPerChunk) {
-            int end = Math.min(i + maxRowsPerChunk, dataRows.size());
-            StringBuilder sb = new StringBuilder();
-            // Добавляем заголовок в каждый чанк
-            sb.append(header).append("\n");
-            for (int j = i; j < end; j++) {
-                sb.append(dataRows.get(j)).append("\n");
-            }
-            chunks.add(sb.toString().trim());
-        }
-        return chunks;
+    private final int maxRows;
+
+    public TableChunker(int maxRowsPerChunk) {
+        this.maxRows = Math.max(1, maxRowsPerChunk);
     }
 
+    public List<String> chunkTable(String wikiTable) {
+        List<String> out = new ArrayList<>();
+        List<String> rows = new ArrayList<>(Arrays.asList(wikiTable.split("\\R")));
+        if (rows.isEmpty()) return out;
+
+        String header = convertRow(rows.getFirst());      // первая строка — заголовок
+        List<String> data = rows.subList(1, rows.size());
+
+        for (int i = 0; i < data.size(); i += maxRows) {
+            int end = Math.min(i + maxRows, data.size());
+            StringBuilder blk = new StringBuilder(header).append('\n');
+            for (int j = i; j < end; j++)
+                blk.append(convertRow(data.get(j))).append('\n');
+            out.add(blk.toString().strip());
+        }
+        return out;
+    }
+
+    /* ——— Markdown‑friendly преобразование строки таблицы ——— */
+    private String convertRow(String raw) {
+        String line = raw.strip();
+        if (!line.startsWith("|")) return line;
+
+        // убираем первый | и делим по |
+        String[] cells = line.substring(1).split("\\|");
+        StringBuilder sb = new StringBuilder("|");
+        for (String c : cells) sb.append(' ').append(cleanCell(c)).append(" |");
+        return sb.toString();
+    }
+
+    private String cleanCell(String cell) {
+        // заменяем XWiki‑ссылки [[text>>url]] → text (url)
+        return cell.replaceAll("\\[\\[(.*?)>>(.*?)]]", "$1 ($2)")
+                // картинки {{image reference}} → image:reference
+                .replaceAll("\\{\\{(.*?)}}", "image:$1")
+                .strip();
+    }
 }
