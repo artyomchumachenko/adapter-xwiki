@@ -1,5 +1,6 @@
 package ru.cbgr.adapter.xwiki.configuration;
 
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.web.client.RestTemplateBuilder;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -12,8 +13,11 @@ import java.time.Duration;
 public class RestTemplateConfiguration {
 
     @Bean
-    public RestTemplate xWikiRestTemplate(RestTemplateBuilder builder) {
+    public RestTemplate xWikiRestTemplate(RestTemplateBuilder builder,
+            @Value("${xwiki.username}") String username,
+            @Value("${xwiki.password}") String password) {
         return builder
+                .basicAuthentication(username, password)
                 .defaultHeader("Accept", MediaType.APPLICATION_JSON_VALUE)
                 .setConnectTimeout(Duration.ofSeconds(5))
                 .setReadTimeout(Duration.ofSeconds(5))
