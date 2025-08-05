@@ -1,5 +1,7 @@
 package ru.cbgr.adapter.xwiki.model;
 
+import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.List;
 
 import jakarta.persistence.CascadeType;
@@ -18,6 +20,9 @@ import lombok.Setter;
 @Getter
 @Setter
 public class Page extends AbstractAuditable {
+
+    @Column(name = "xwiki_title", nullable = false)
+    private String title;
 
     @Column(name = "xwiki_id", nullable = false, length = 300)
     private String xwikiId;

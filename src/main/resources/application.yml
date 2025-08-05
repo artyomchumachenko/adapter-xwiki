@@ -24,8 +24,8 @@ xwiki:
 
 logging:
   level:
-    root: ${LOG_LEVEL_ROOT}
-    ru.cbgr.adapter.xwiki.service: ${LOG_LEVEL_SERVICE_LAYER}
+    root: ${LOG_LEVEL_ROOT:INFO}
+    ru.cbgr.adapter.xwiki.service: ${LOG_LEVEL_SERVICE_LAYER:DEBUG}
 
 models:
   embedding-models:

@@ -10,6 +10,7 @@ import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import ru.cbgr.adapter.xwiki.client.LlamaAiClient;
+import ru.cbgr.adapter.xwiki.dto.xwiki.SearchResultDto;
 import ru.cbgr.adapter.xwiki.model.dto.DocumentEmbeddingDto;
 import ru.cbgr.adapter.xwiki.service.XWikiService;
 
@@ -40,12 +41,13 @@ public class XWikiController {
      * @return ResponseEntity со списком URL
      */
     @GetMapping("/search")
-    public ResponseEntity<List<DocumentEmbeddingDto>> search(
+    public ResponseEntity<List<SearchResultDto>> search(
             @RequestParam String query,
             @RequestParam(defaultValue = "5") int limit) {
 
         List<DocumentEmbeddingDto> urls = xWikiService.search(query, limit);
-        return ResponseEntity.ok(urls);
+        List<SearchResultDto> result = xWikiService.getLinkResults(urls);
+        return ResponseEntity.ok(result);
     }
 
     /**

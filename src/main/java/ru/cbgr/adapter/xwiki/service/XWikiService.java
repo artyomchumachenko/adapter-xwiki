@@ -1,6 +1,8 @@
 package ru.cbgr.adapter.xwiki.service;
 
 import com.pgvector.PGvector;
+
+import jakarta.persistence.EntityNotFoundException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.ai.embedding.Embedding;
@@ -17,6 +19,7 @@ import ru.cbgr.adapter.xwiki.client.XWikiClient;
 import ru.cbgr.adapter.xwiki.configuration.properties.EmbeddingModelConfigRecord;
 import ru.cbgr.adapter.xwiki.configuration.properties.ModelsProperties;
 import ru.cbgr.adapter.xwiki.dto.xwiki.PagesResponse;
+import ru.cbgr.adapter.xwiki.dto.xwiki.SearchResultDto;
 import ru.cbgr.adapter.xwiki.dto.xwiki.SpacesResponse;
 import ru.cbgr.adapter.xwiki.dto.xwiki.modifications.Link;
 import ru.cbgr.adapter.xwiki.dto.xwiki.page.PageDetails;
@@ -148,6 +151,7 @@ public class XWikiService {
     /** Создание новой страницы. */
     private Page createMeta(PageSummary summary) {
         Page page = new Page();
+        page.setTitle(summary.getTitle());
         page.setXwikiId(summary.getId());
         page.setXwikiVersion(summary.getVersion());
         page.setXwikiAbsoluteUrl(summary.getXwikiAbsoluteUrl());
@@ -388,5 +392,23 @@ public class XWikiService {
 //        finalResults.forEach(dto -> dto.setTextSnippet(getExtendedTextSnippet(dto)));
 
         return finalResults;
+    }
+
+    public List<SearchResultDto> getLinkResults(List<DocumentEmbeddingDto> urls) {
+        return urls.stream()
+                .map(u -> {
+                    Page page = pageRepository.findByXwikiId(u.getXwikiId())
+                            .orElseThrow(() -> new EntityNotFoundException(
+                                    "Page not found, xwiki_id: " + u.getXwikiId()
+                            ));
+                    return new SearchResultDto(
+                            page.getTitle(),
+                            page.getXwikiAbsoluteUrl(),
+                            u.getTextSnippet(),
+                            page.getXwikiId(),
+                            page.getXwikiVersion()
+                    );
+                })
+                .collect(Collectors.toList());
     }
 }
