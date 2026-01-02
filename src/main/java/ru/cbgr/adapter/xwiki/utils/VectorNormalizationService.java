@@ -1,4 +1,4 @@
-package ru.cbgr.adapter.xwiki.service;
+package ru.cbgr.adapter.xwiki.utils;
 
 import org.springframework.stereotype.Service;
 

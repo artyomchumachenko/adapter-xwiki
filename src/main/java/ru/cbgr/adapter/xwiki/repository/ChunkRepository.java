@@ -9,4 +9,5 @@ import ru.cbgr.adapter.xwiki.model.Page;
 
 public interface ChunkRepository extends JpaRepository<Chunk, Integer> {
     List<Chunk> findByPage(Page updatedPage);
+    List<Chunk> findByPageId(long pageId);
 }

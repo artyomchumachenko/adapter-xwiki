@@ -2,96 +2,154 @@ package ru.cbgr.adapter.xwiki.chunker;
 
 import lombok.extern.slf4j.Slf4j;
 
-import java.text.BreakIterator;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Locale;
+import java.util.regex.Pattern;
 
-/** Делит текст на чёткие чанки по предложениям/абзацам. */
+/**
+ * Делит обычный текст на чанки.
+ * Гарантирует, что ни один чанк не превышает hardMaxChars.
+ */
 @Slf4j
 public class TextChunker {
 
-    private final int target;
-    private final int tolerance;
-    private final int overlapSent;
+    private static final Pattern SENTENCE_SPLIT =
+            Pattern.compile("(?<=[.!?…])\\s+"); // простое деление по окончаниям предложений
 
-    public TextChunker(int targetSize, int tolerance, int overlapSent) {
-        this.target = targetSize;
-        this.tolerance = tolerance;
-        this.overlapSent = overlapSent;
+    private static final Pattern PARAGRAPH_SPLIT =
+            Pattern.compile("\\R{2,}"); // пустая строка/несколько переносов
+
+    private final int targetChars;
+    private final int hardMaxChars;
+    private final int hardOverlapChars;
+
+    public TextChunker(int targetChars, int hardMaxChars, int hardOverlapChars) {
+        this.targetChars = Math.max(100, targetChars);
+        this.hardMaxChars = Math.max(this.targetChars, hardMaxChars);
+        this.hardOverlapChars = Math.max(0, hardOverlapChars);
     }
 
-    public List<String> chunkText(String content) {
-        // Сначала режем по верхнеуровневым заголовкам, чтобы не рвать большие блоки
-        List<String> sections = splitByHeaders(content);
-        List<String> out = new ArrayList<>();
+    public List<String> chunkText(String text) {
+        if (text == null || text.isBlank()) return List.of();
 
-        for (String section : sections) {
-            if (fits(section)) {
-                out.add(section);
+        // 1) Абзацы как “крупные блоки”
+        String[] paragraphs = PARAGRAPH_SPLIT.split(text.strip());
+
+        List<String> rawChunks = new ArrayList<>();
+        StringBuilder acc = new StringBuilder();
+
+        for (String p : paragraphs) {
+            String paragraph = p.strip();
+            if (paragraph.isEmpty()) continue;
+
+            // если абзац слишком большой — режем его по предложениям/словам
+            if (paragraph.length() > hardMaxChars) {
+                flushAcc(acc, rawChunks);
+                rawChunks.addAll(chunkLargeParagraph(paragraph));
+                continue;
+            }
+
+            // накапливаем чанки примерно targetChars
+            if (acc.isEmpty()) {
+                acc.append(paragraph);
+            } else if (acc.length() + 2 + paragraph.length() <= targetChars) {
+                acc.append("\n\n").append(paragraph);
             } else {
-                out.addAll(sliceBySentences(section));
+                rawChunks.add(acc.toString().strip());
+                acc.setLength(0);
+                acc.append(paragraph);
             }
         }
+
+        flushAcc(acc, rawChunks);
+
+        // 2) Финальная гарантия hard-limit
+        return HardLimiter.enforce(rawChunks, hardMaxChars, hardOverlapChars);
+    }
+
+    private void flushAcc(StringBuilder acc, List<String> out) {
+        if (acc != null && !acc.isEmpty()) {
+            String s = acc.toString().strip();
+            if (!s.isEmpty()) out.add(s);
+        }
+    }
+
+    private List<String> chunkLargeParagraph(String paragraph) {
+        // 2.1) Пытаемся разрезать по предложениям
+        String[] sentences = SENTENCE_SPLIT.split(paragraph);
+        if (sentences.length > 1) {
+            return packToTarget(sentences);
+        }
+
+        // 2.2) Если предложений “не видно” (длинная строка), режем по словам
+        return splitByWordsThenChars(paragraph);
+    }
+
+    private List<String> packToTarget(String[] parts) {
+        List<String> out = new ArrayList<>();
+        StringBuilder acc = new StringBuilder();
+
+        for (String part : parts) {
+            String s = part.strip();
+            if (s.isEmpty()) continue;
+
+            if (s.length() > hardMaxChars) {
+                // если даже предложение слишком длинное — fallback
+                flushAcc(acc, out);
+                out.addAll(splitByWordsThenChars(s));
+                continue;
+            }
+
+            if (acc.isEmpty()) {
+                acc.append(s);
+            } else if (acc.length() + 1 + s.length() <= targetChars) {
+                acc.append(' ').append(s);
+            } else {
+                out.add(acc.toString().strip());
+                acc.setLength(0);
+                acc.append(s);
+            }
+        }
+
+        flushAcc(acc, out);
         return out;
     }
 
-    /* ——— private ——— */
+    private List<String> splitByWordsThenChars(String text) {
+        String t = text.strip();
+        if (t.length() <= hardMaxChars) return List.of(t);
 
-    /** true, если строка «в диапазоне» [target - tol ; target + tol] */
-    private boolean fits(String s) {
-        int len = s.length();
-        return len >= target - tolerance && len <= target + tolerance;
-    }
-
-    private List<String> splitByHeaders(String text) {
-        List<String> res = new ArrayList<>();
-        StringBuilder buf = new StringBuilder();
-
-        for (String line : text.split("\\R")) {
-            if (isHeader(line)) {
-                if (!buf.isEmpty()) {
-                    res.add(buf.toString().strip());
-                    buf.setLength(0);
-                }
-            }
-            buf.append(line).append('\n');
+        String[] words = t.split("\\s+");
+        if (words.length <= 1) {
+            // один “монолитный токен” — режем по символам
+            return HardLimiter.splitByCharsWithOverlap(t, hardMaxChars, hardOverlapChars);
         }
-        if (!buf.isEmpty()) res.add(buf.toString().strip());
-        return res;
-    }
 
-    private boolean isHeader(String line) {
-        String t = line.strip();
-        return t.startsWith("**") || t.startsWith("==");
-    }
+        List<String> out = new ArrayList<>();
+        StringBuilder acc = new StringBuilder();
 
-    /** Скользящее окно предложений до «идеального» размера. */
-    private List<String> sliceBySentences(String text) {
-        List<String> res = new ArrayList<>();
-        BreakIterator it = BreakIterator.getSentenceInstance(new Locale("ru"));
-        it.setText(text);
+        for (String w : words) {
+            if (w.isEmpty()) continue;
 
-        List<Integer> bounds = new ArrayList<>();
-        for (int p = it.first(); p != BreakIterator.DONE; p = it.next()) bounds.add(p);
-
-        int sentCnt = bounds.size() - 1;
-        int idx = 0;
-        while (idx < sentCnt) {
-            int chunkStart = bounds.get(idx);
-            int last = idx;
-
-            // расширяемся, пока не превысим target+tolerance
-            while (last + 1 < sentCnt &&
-                    bounds.get(last + 1) - chunkStart <= target + tolerance) {
-                last++;
+            if (w.length() > hardMaxChars) {
+                // слово само по себе больше лимита — режем по символам
+                flushAcc(acc, out);
+                out.addAll(HardLimiter.splitByCharsWithOverlap(w, hardMaxChars, hardOverlapChars));
+                continue;
             }
-            // если всё ещё слишком маленький чанк – добавляем ещё предложение
-            if (bounds.get(last) - chunkStart < target - tolerance && last + 1 < sentCnt) last++;
 
-            res.add(text.substring(chunkStart, bounds.get(last)).strip());
-            idx = Math.max(idx + 1, last - overlapSent + 1);
+            if (acc.isEmpty()) {
+                acc.append(w);
+            } else if (acc.length() + 1 + w.length() <= hardMaxChars) {
+                acc.append(' ').append(w);
+            } else {
+                out.add(acc.toString().strip());
+                acc.setLength(0);
+                acc.append(w);
+            }
         }
-        return res;
+
+        flushAcc(acc, out);
+        return out;
     }
 }
