@@ -1,12 +1,19 @@
 package ru.cbgr.adapter.xwiki.service;
 
+import java.util.Comparator;
+import java.util.HashMap;
+import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+import java.util.stream.Collectors;
+
 import com.pgvector.PGvector;
-import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+
 import org.springframework.ai.embedding.Embedding;
 import org.springframework.ai.embedding.EmbeddingResponse;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+
 import ru.cbgr.adapter.xwiki.client.LlamaAiClient;
 import ru.cbgr.adapter.xwiki.configuration.properties.EmbeddingModelConfigRecord;
 import ru.cbgr.adapter.xwiki.configuration.properties.ModelsProperties;
@@ -16,13 +23,17 @@ import ru.cbgr.adapter.xwiki.utils.FloatVectorMapper;
 import ru.cbgr.adapter.xwiki.utils.PgVectorRowMapper;
 import ru.cbgr.adapter.xwiki.utils.VectorNormalizationService;
 
-import java.util.*;
-import java.util.stream.Collectors;
+import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 
 @Service
 @Slf4j
 @RequiredArgsConstructor
 public class EmbeddingSearchService {
+
+    // === Applied improvements configuration ===
+    private static final int CANDIDATE_MULTIPLIER = 20; // Improvement #2
+    private static final int RRF_K = 60;                // Improvement #3 (typical 50-60)
 
     private final JdbcTemplate jdbcTemplate;
     private final ContentNormalizationService contentNormalizationService;
@@ -40,43 +51,64 @@ public class EmbeddingSearchService {
             return List.of();
         }
 
-        Map<String, List<DocumentEmbeddingDto>> allModelResults = fetchAllModels(queryVectors, limit);
+        // Improvement #2: use larger candidate pool per model
+        int candidateLimit = Math.max(limit, limit * CANDIDATE_MULTIPLIER);
 
-        // --- объединение результатов (как в исходнике) ---
-        Map<String, Double> combinedScores = new HashMap<>();
+        // Each model returns: best (top) chunk per page, sorted by distance
+        Map<String, List<DocumentEmbeddingDto>> allModelResults = fetchAllModels(queryVectors, candidateLimit);
+
+        // Improvement #3: RRF fusion across models
+        Map<String, Double> fusedScores = new HashMap<>();
         Map<String, DocumentEmbeddingDto> bestDtoByPage = new HashMap<>();
 
         for (Map.Entry<String, List<DocumentEmbeddingDto>> entry : allModelResults.entrySet()) {
-            List<DocumentEmbeddingDto> resultsForModel = entry.getValue();
-            resultsForModel.sort(Comparator.comparingDouble(DocumentEmbeddingDto::getDistance));
-
-            // лучший чанк на страницу для данной модели
-            Map<String, DocumentEmbeddingDto> bestPerPageForModel = new LinkedHashMap<>();
-            for (DocumentEmbeddingDto dto : resultsForModel) {
-                bestPerPageForModel.merge(dto.getXwikiId(), dto,
-                        (a, b) -> a.getDistance() <= b.getDistance() ? a : b);
+            String modelName = entry.getKey();
+            List<DocumentEmbeddingDto> results = entry.getValue();
+            if (results == null || results.isEmpty()) {
+                continue;
             }
 
-            List<DocumentEmbeddingDto> topNForModel = bestPerPageForModel.values().stream()
-                    .sorted(Comparator.comparingDouble(DocumentEmbeddingDto::getDistance))
-                    .limit(limit)
-                    .toList();
+            // Defensive: ensure sorted (SQL already sorts)
+            results.sort(Comparator.comparingDouble(DocumentEmbeddingDto::getDistance));
 
-            for (int i = 0; i < topNForModel.size(); i++) {
-                DocumentEmbeddingDto dto = topNForModel.get(i);
-                double score = (double) (limit - i) / (double) limit; // 1.0 .. (1/limit)
+            for (int i = 0; i < results.size(); i++) {
+                int rank = i + 1; // 1-based
+                DocumentEmbeddingDto dto = results.get(i);
+
                 String pageId = dto.getXwikiId();
+                double rrf = 1.0d / (RRF_K + rank);
 
-                combinedScores.merge(pageId, score, Double::sum);
+                fusedScores.merge(pageId, rrf, Double::sum);
+
+                // keep "best evidence" (minimal distance across all models)
                 bestDtoByPage.merge(pageId, dto,
                         (oldDto, newDto) -> oldDto.getDistance() <= newDto.getDistance() ? oldDto : newDto);
             }
+
+            if (log.isDebugEnabled()) {
+                log.debug("Model {} produced {} per-page candidates (candidateLimit={})",
+                        modelName, results.size(), candidateLimit);
+            }
         }
 
-        return combinedScores.entrySet().stream()
-                .sorted(Map.Entry.comparingByValue(Comparator.reverseOrder()))
+        // Final ranking:
+        // 1) by fused RRF score DESC
+        // 2) tie-breaker: best distance ASC (more similar)
+        return fusedScores.entrySet().stream()
+                .sorted((a, b) -> {
+                    int cmp = Double.compare(b.getValue(), a.getValue());
+                    if (cmp != 0) return cmp;
+
+                    DocumentEmbeddingDto da = bestDtoByPage.get(a.getKey());
+                    DocumentEmbeddingDto db = bestDtoByPage.get(b.getKey());
+                    if (da == null && db == null) return 0;
+                    if (da == null) return 1;
+                    if (db == null) return -1;
+                    return Double.compare(da.getDistance(), db.getDistance());
+                })
                 .limit(limit)
                 .map(e -> bestDtoByPage.get(e.getKey()))
+                .filter(Objects::nonNull)
                 .collect(Collectors.toList());
     }
 
@@ -89,7 +121,8 @@ public class EmbeddingSearchService {
                 EmbeddingResponse embeddingResponse = llamaAiClient.getEmbeddings(normalizedQuery, modelName);
                 List<Embedding> results = embeddingResponse.getResults();
                 if (results == null || results.isEmpty()) {
-                    log.warn("Не удалось получить эмбеддинг для запроса '{}' с моделью {}", rawQueryForLogs, modelName);
+                    log.warn("Не удалось получить эмбеддинг для запроса '{}' с моделью {}",
+                            rawQueryForLogs, modelName);
                     continue;
                 }
 
@@ -107,13 +140,38 @@ public class EmbeddingSearchService {
         return queryVectors;
     }
 
+    /**
+     * Improvement #1: per-page deduplication in SQL (best chunk per page),
+     * returning candidates sorted by distance.
+     * Important: this query returns ONE row per page using row_number().
+     */
     private Map<String, List<DocumentEmbeddingDto>> fetchAllModels(Map<String, PGvector> queryVectors, int limit) {
+
+        // Note: distance expression used twice (SELECT and ORDER BY in window); passed twice as parameters.
         String sqlTemplate = """
-                SELECT p.xwiki_id, c.chunk_index, e.%s AS embedding, c.text_snippet,
-                       e.%s <-> ? AS distance
-                FROM pages p
-                JOIN chunks c ON c.page_id = p.id
-                JOIN embeddings e ON e.chunk_id = c.id
+                WITH ranked AS (
+                    SELECT
+                        p.xwiki_id,
+                        c.chunk_index,
+                        e.%s AS embedding,
+                        c.text_snippet,
+                        (e.%s <-> ?) AS distance,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY p.xwiki_id
+                            ORDER BY (e.%s <-> ?) ASC
+                        ) AS rn
+                    FROM pages p
+                    JOIN chunks c ON c.page_id = p.id
+                    JOIN embeddings e ON e.chunk_id = c.id
+                )
+                SELECT
+                    xwiki_id,
+                    chunk_index,
+                    embedding,
+                    text_snippet,
+                    distance
+                FROM ranked
+                WHERE rn = 1
                 ORDER BY distance ASC
                 LIMIT ?
                 """;
@@ -125,20 +183,24 @@ public class EmbeddingSearchService {
             PGvector queryVector = entry.getValue();
 
             String columnName = columnNameResolver.toEmbeddingColumn(modelName);
-            String sql = String.format(sqlTemplate, columnName, columnName);
+            String sql = String.format(sqlTemplate, columnName, columnName, columnName);
 
             List<DocumentEmbeddingDto> modelResults = jdbcTemplate.query(
                     sql,
                     (rs, rowNum) -> pgVectorRowMapper.map(rs),
-                    queryVector, limit
+                    // params order:
+                    queryVector, // distance
+                    queryVector, // window ORDER BY distance
+                    limit        // LIMIT
             );
 
             allModelResults.put(modelName, modelResults);
 
-            modelResults.forEach(dto ->
-                    log.info("Найден документ {} с расстоянием {} для модели {}",
-                            dto.getXwikiId(), dto.getDistance(), modelName)
-            );
+            if (log.isDebugEnabled()) {
+                for (DocumentEmbeddingDto dto : modelResults) {
+                    log.debug("Model {}: xwikiId={}, distance={}", modelName, dto.getXwikiId(), dto.getDistance());
+                }
+            }
         }
 
         return allModelResults;
