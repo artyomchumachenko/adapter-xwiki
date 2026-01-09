@@ -1,0 +1,28 @@
+@startuml
+title Контейнеры внутри сервиса XWiki Adapter
+
+rectangle "REST API" as Api
+rectangle "Сервис обработки" as ProcessSvc
+rectangle "Сервис поиска" as SearchSvc
+rectangle "XWikiClient" as XWikiClient
+rectangle "LlamaAiClient" as AiClient
+rectangle "Repository (Page/Chunk/Embedding)" as Repo
+rectangle "PostgreSQL + pgvector" as DB
+rectangle "XWiki REST API" as XWiki
+rectangle "AI Embedding API" as AI
+
+Api --> ProcessSvc : /processAll
+Api --> SearchSvc : /search
+
+ProcessSvc --> XWikiClient : загрузка пространств/страниц
+ProcessSvc --> AiClient : эмбеддинги чанков
+ProcessSvc --> Repo : запись страниц/чанков/векторов
+
+SearchSvc --> AiClient : эмбеддинги запроса
+SearchSvc --> Repo : поиск чанков
+
+Repo --> DB
+XWikiClient --> XWiki
+AiClient --> AI
+
+@enduml

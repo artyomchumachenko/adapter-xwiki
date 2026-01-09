@@ -1,0 +1,20 @@
+@startuml
+title Контекстная архитектура XWiki Adapter
+
+actor "Внешний клиент" as Client
+rectangle "XWiki Adapter" as Service
+rectangle "XWiki" as XWiki
+rectangle "AI сервис эмбеддингов" as AI
+rectangle "База данных (PostgreSQL + pgvector)" as DB
+
+Client --> Service : HTTP /api/xwiki/processAll
+Service --> XWiki : REST запросы (пространства/страницы/контент)
+Service --> AI : запрос эмбеддингов
+Service --> DB : запись страниц/чанков/векторов
+
+Client --> Service : HTTP /api/xwiki/search
+Service --> AI : эмбеддинги запроса
+Service --> DB : поиск похожих чанков
+Service --> Client : список результатов
+
+@enduml
