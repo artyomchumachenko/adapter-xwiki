@@ -34,3 +34,4 @@ build/
 .vscode/
 .cursorrules
 .cursor
+reports/sast/

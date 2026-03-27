@@ -1,0 +1,77 @@
+name: SAST
+
+on:
+  push:
+    branches:
+      - main
+      - master
+      - develop
+      - security-gate
+  pull_request:
+
+jobs:
+  sast:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      security-events: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Create report directory
+        run: mkdir -p reports/sast
+
+      - name: Build SAST image
+        run: docker build -f Dockerfile.sast -t xwiki-sast .
+
+      - name: Compile project
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            xwiki-sast \
+            "mvn -DskipTests compile"
+
+      - name: Generate XML report
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            xwiki-sast \
+            "mvn -P sast -DskipTests -Dspotbugs.xmlOutput=true -Dspotbugs.htmlOutput=false -Dspotbugs.sarifOutput=false spotbugs:spotbugs"
+
+      - name: Generate HTML report
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            xwiki-sast \
+            "mvn -P sast -DskipTests -Dspotbugs.xmlOutput=false -Dspotbugs.htmlOutput=true -Dspotbugs.outputDirectory=target/site spotbugs:spotbugs"
+
+      - name: Generate SARIF report
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace" \
+            -w /workspace \
+            xwiki-sast \
+            "mvn -P sast -DskipTests -Dspotbugs.xmlOutput=false -Dspotbugs.htmlOutput=false -Dspotbugs.sarifOutput=true -Dspotbugs.sarifOutputDirectory=target -Dspotbugs.sarifOutputFilename=spotbugs.sarif.json spotbugs:spotbugs"
+
+      - name: Copy reports
+        run: |
+          cp target/spotbugsXml.xml reports/sast/spotbugs-report.xml
+          cp target/site/spotbugs.html reports/sast/spotbugs-report.html
+          cp target/spotbugs.sarif.json reports/sast/spotbugs.sarif.json
+
+      - name: Upload scan artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: spotbugs-report
+          path: reports/sast/
+          if-no-files-found: error
+
+      - name: Upload SARIF to GitHub Code Scanning
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: reports/sast/spotbugs.sarif.json
