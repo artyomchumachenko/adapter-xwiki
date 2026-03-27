@@ -30,6 +30,9 @@ jobs:
       - name: Create report directory
         run: mkdir -p reports/sast
 
+      - name: Make Maven wrapper executable
+        run: chmod +x ./mvnw
+
       - name: Build SAST image
         run: docker build -f Dockerfile.sast -t xwiki-sast .
 
