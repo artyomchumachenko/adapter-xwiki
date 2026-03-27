@@ -4,6 +4,9 @@ import org.jsoup.Jsoup;
 import org.jsoup.nodes.Document;
 import org.springframework.stereotype.Service;
 
+import java.util.Locale;
+import java.util.regex.Pattern;
+
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 
@@ -11,6 +14,11 @@ import lombok.extern.slf4j.Slf4j;
 @Slf4j
 @RequiredArgsConstructor
 public class ContentNormalizationService {
+
+    private static final Pattern XWIKI_MACRO_PATTERN =
+            Pattern.compile("\\{\\{/?(info|html)\\}\\}", Pattern.CASE_INSENSITIVE);
+    private static final Pattern POLL_PERCENT_LINE =
+            Pattern.compile("^\\d{1,3}(?:[.,]\\d+)?%.*");
 
     /**
      * Нормализует переданный чанк.
@@ -46,16 +54,39 @@ public class ContentNormalizationService {
     }
 
     public String normalizeForChunking(String raw) {
-        if (raw == null || raw.isBlank()) return "";
+        if (raw == null || raw.isBlank()) {
+            return "";
+        }
 
-        // 1) HTML -> text (как обсуждали ранее)
         String text = stripHtml(raw);
-
-        // 2) Легкая унификация пробелов/переносов (без агрессивных replaceAll по строкам)
         text = text.replace("\r\n", "\n").replace("\r", "\n");
-        text = text.replace('\u00A0', ' '); // NBSP -> space
+        text = text.replace('\u00A0', ' ');
+        text = XWIKI_MACRO_PATTERN.matcher(text).replaceAll("");
 
-        return text.trim();
+        String[] lines = text.split("\n");
+        StringBuilder out = new StringBuilder(text.length());
+        boolean lastWasEmpty = false;
+
+        for (String line : lines) {
+            String normalizedLine = line.replace('\u00A0', ' ').trim().replaceAll("\\s+", " ");
+            normalizedLine = processWikiLinks(normalizedLine);
+            if (normalizedLine.isEmpty()) {
+                if (!lastWasEmpty) {
+                    out.append('\n');
+                    lastWasEmpty = true;
+                }
+                continue;
+            }
+
+            if (shouldSkipLine(normalizedLine)) {
+                continue;
+            }
+
+            out.append(normalizedLine).append('\n');
+            lastWasEmpty = false;
+        }
+
+        return out.toString().trim();
     }
 
     /**
@@ -119,5 +150,38 @@ public class ContentNormalizationService {
             }
         }
         return line;
+    }
+
+    private boolean shouldSkipLine(String line) {
+        String normalized = line.toLowerCase(Locale.ROOT);
+
+        if (normalized.startsWith("\u0442\u0435\u0433\u0438:")
+                || normalized.startsWith("\u0445\u0430\u0431\u044b:")
+                || normalized.startsWith("\u043d\u0440\u0430\u0432\u0438\u0442\u0441\u044f")
+                || normalized.startsWith("\u043d\u0435 \u043d\u0440\u0430\u0432\u0438\u0442\u0441\u044f")
+                || normalized.startsWith("\u0434\u043e\u0431\u0430\u0432\u0438\u0442\u044c \u0432 \u0437\u0430\u043a\u043b\u0430\u0434\u043a\u0438")
+                || normalized.startsWith("\u043a\u043e\u043c\u043c\u0435\u043d\u0442\u0430\u0440\u0438\u0438")) {
+            return true;
+        }
+
+        if (normalized.startsWith("\u0443\u0440\u043e\u0432\u0435\u043d\u044c \u0441\u043b\u043e\u0436\u043d\u043e\u0441\u0442\u0438")
+                || normalized.startsWith("\u0432\u0440\u0435\u043c\u044f \u043d\u0430 \u043f\u0440\u043e\u0447\u0442\u0435\u043d\u0438\u0435")
+                || normalized.startsWith("\u043e\u0445\u0432\u0430\u0442 \u0438 \u0447\u0438\u0442\u0430\u0442\u0435\u043b\u0438")
+                || normalized.startsWith("\u0438\u0441\u0442\u043e\u0447\u043d\u0438\u043a (habr):")
+                || normalized.startsWith("flow:")
+                || normalized.equals("\u043c\u043d\u0435\u043d\u0438\u0435")) {
+            return true;
+        }
+
+        if (normalized.startsWith("\u0442\u043e\u043b\u044c\u043a\u043e \u0437\u0430\u0440\u0435\u0433\u0438\u0441\u0442\u0440\u0438\u0440\u043e\u0432\u0430\u043d\u043d\u044b\u0435 \u043f\u043e\u043b\u044c\u0437\u043e\u0432\u0430\u0442\u0435\u043b\u0438 \u043c\u043e\u0433\u0443\u0442 \u0443\u0447\u0430\u0441\u0442\u0432\u043e\u0432\u0430\u0442\u044c \u0432 \u043e\u043f\u0440\u043e\u0441\u0435")) {
+            return true;
+        }
+
+        if (normalized.startsWith("\u043f\u0440\u043e\u0433\u043e\u043b\u043e\u0441\u043e\u0432\u0430\u043b\u0438 ")
+                || normalized.startsWith("\u0432\u043e\u0437\u0434\u0435\u0440\u0436\u0430\u043b\u0438\u0441\u044c ")) {
+            return true;
+        }
+
+        return POLL_PERCENT_LINE.matcher(normalized).matches();
     }
 }

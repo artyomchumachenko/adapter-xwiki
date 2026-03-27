@@ -1,0 +1,70 @@
+@startuml
+title DFD Level 1 - XWiki Adapter
+
+left to right direction
+skinparam shadowing false
+skinparam packageStyle rectangle
+skinparam defaultFontName Consolas
+
+actor "Пользователь" as User
+actor "Администратор" as Admin
+database "D1 PostgreSQL + pgvector" as DB
+cloud "E1 XWiki REST API" as XWiki
+cloud "E2 Ollama / AI service" as AI
+
+rectangle "TB2 Контур микросервиса" {
+  rectangle "P1 REST Controllers\nXWikiController\nLLMController\nEmbeddingController" as P1
+  rectangle "P2 Orchestration Service\nXWikiService" as P2
+  rectangle "P3 Processing Pipeline\nXWikiSpaceWalker\nPageProcessor\nPageContentService\nPageUpsertService" as P3
+  rectangle "P4 Search Pipeline\nEmbeddingSearchService" as P4
+  rectangle "P5 AI Client\nLlamaAiClient" as P5
+  rectangle "P6 XWiki Client\nXWikiClient" as P6
+  rectangle "P7 Persistence Layer\nPageRepository\nChunkRepository\nEmbeddingJdbcRepository" as P7
+}
+
+User --> P1 : HTTPS/HTTP\nsearch(), search/answer()
+Admin --> P1 : HTTPS/HTTP\nprocessAll(), processPage(), chat(), embedding()
+
+P1 --> P2 : вызовы сервиса
+P1 --> P5 : прямой вызов для /api/chat и /api/embedding
+
+P2 --> P3 : индексация страниц
+P2 --> P4 : семантический поиск
+P2 --> P7 : чтение метаданных страниц
+
+P3 --> P6 : spaces/pages/page details\nREST + Basic Auth
+P3 --> P7 : upsert pages/chunks
+P3 --> P5 : embeddings для чанков
+
+P4 --> P5 : embeddings для запроса
+P4 --> P7 : vector search / metadata lookup
+
+P6 --> XWiki : HTTP(S) REST
+P5 --> AI : HTTP REST
+P7 --> DB : JDBC / PostgreSQL 5432
+
+note right of P1
+Ключевой риск:
+в коде нет аутентификации
+на административных эндпоинтах.
+end note
+
+note bottom of P5
+AI-клиент обрабатывает
+недоверенный ввод пользователя
+и контент из XWiki.
+end note
+
+note left of User
+TB1 Внешняя сеть
+end note
+
+note top of P1
+TB2 Контур микросервиса
+end note
+
+note bottom of DB
+TB3 Данные и внешние зависимости
+end note
+
+@enduml

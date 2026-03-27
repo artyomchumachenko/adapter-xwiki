@@ -1,0 +1,110 @@
+@startuml
+title Threat Model - STRIDE for XWiki Adapter
+
+left to right direction
+skinparam shadowing false
+skinparam packageStyle rectangle
+skinparam defaultFontName Consolas
+skinparam noteBackgroundColor #FFF6D5
+skinparam noteBorderColor #B8860B
+
+actor "Пользователь" as User
+actor "Администратор" as Admin
+rectangle "REST API\n/controllers" as API
+rectangle "Индексация\nXWikiService + PageProcessor" as Proc
+rectangle "Поиск и RAG\nEmbeddingSearchService + answer" as Search
+rectangle "XWikiClient" as XClient
+rectangle "LlamaAiClient" as AIClient
+database "PostgreSQL + pgvector" as DB
+cloud "XWiki REST API" as XWiki
+cloud "Ollama / AI service" as AI
+
+User --> API
+Admin --> API
+API --> Proc
+API --> Search
+Proc --> XClient
+Proc --> AIClient
+Search --> AIClient
+Search --> DB
+Proc --> DB
+XClient --> XWiki
+AIClient --> AI
+
+note top of API
+S1/T1: Нет аутентификации на
+/processAll, /processPage,
+/api/chat, /api/embedding.
+
+T2: Подмена администратора через
+неавторизованный вызов.
+
+R1: Недостаточный аудит
+административных операций.
+
+D1: Flood на processAll/search/chat
+может исчерпать CPU/AI/DB.
+end note
+
+note bottom of Proc
+T3: Вредоносный контент из XWiki
+может загрязнить индекс.
+
+D2: Массовая переиндексация
+усиливает нагрузку на БД и AI.
+
+E1: Отсутствие разграничения
+прав для ручной обработки страниц.
+end note
+
+note right of Search
+I1: Утечка текстовых сниппетов
+через search/search-answer.
+
+T4: Prompt injection через
+контекст из XWiki.
+
+D3: Длинный query вызывает
+дорогие embeddings и поиск.
+end note
+
+note right of DB
+T5: Несанкционированное изменение
+pages/chunks/embeddings.
+
+I2: Утечка бизнес-контента,
+векторов и URL страниц.
+
+R2: Недостаточно доказательств,
+кто менял индекс.
+end note
+
+note top of XClient
+S2: Подмена XWiki endpoint
+при компрометации конфигурации.
+
+I3: Basic Auth credentials могут
+утечь через env/log/config.
+end note
+
+note top of AIClient
+S3: Подмена AI-сервиса или модели.
+
+T6: Некорректный ответ модели
+искажает данные/результаты.
+
+I4: Передача чувствительного
+контента во внешний AI.
+end note
+
+legend right
+STRIDE:
+S - Spoofing
+T - Tampering
+R - Repudiation
+I - Information Disclosure
+D - Denial of Service
+E - Elevation of Privilege
+endlegend
+
+@enduml

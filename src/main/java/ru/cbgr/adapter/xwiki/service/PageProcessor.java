@@ -31,7 +31,16 @@ public class PageProcessor {
 
     @Transactional
     public void processPage(PageSummary summary) {
-        if (isSkipProcess(summary, null)) {
+        processPageInternal(summary, false);
+    }
+
+    @Transactional
+    public void processPageForce(PageSummary summary) {
+        processPageInternal(summary, true);
+    }
+
+    private void processPageInternal(PageSummary summary, boolean force) {
+        if (!force && isSkipProcess(summary, null)) {
             return;
         }
 
@@ -39,7 +48,7 @@ public class PageProcessor {
 
         var chunks = pageContentService.loadAndChunkContent(summary);
         if (chunks.isEmpty()) {
-            log.warn("Контент страницы {} пуст – пропуск.", summary.getId());
+            log.warn("Empty content for page {} after processing.", summary.getId());
             return;
         }
 

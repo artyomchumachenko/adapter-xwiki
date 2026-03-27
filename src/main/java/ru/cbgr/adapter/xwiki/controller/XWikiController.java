@@ -5,6 +5,7 @@ import java.util.List;
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
+import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -31,6 +32,13 @@ public class XWikiController {
         xWikiService.processAllSpacesAndPages();
         return ResponseEntity.ok("Обработка пространств и страниц запущена.");
     }
+
+    @PostMapping("/processPage")
+    public ResponseEntity<String> processPageForce(@RequestParam String pageId) {
+        xWikiService.forceProcessPage(pageId);
+        return ResponseEntity.ok("Forced processing started for pageId=" + pageId);
+    }
+
 
     /**
      * Endpoint для умного поиска по базе знаний.

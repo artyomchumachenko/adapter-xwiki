@@ -1,0 +1,45 @@
+@startuml
+title DFD Level 0 - XWiki Adapter
+
+left to right direction
+skinparam shadowing false
+skinparam packageStyle rectangle
+skinparam defaultFontName Consolas
+
+actor "Пользователь\n(поиск/вопросы)" as User
+actor "Администратор\n(ручной запуск индексации)" as Admin
+rectangle "XWiki Adapter\nSpring Boot microservice" as Service
+database "PostgreSQL + pgvector\npages / chunks / embeddings" as DB
+cloud "XWiki REST API" as XWiki
+cloud "Ollama / AI service\nembeddings + chat" as AI
+
+User --> Service : HTTPS/HTTP\nGET /api/xwiki/search\nGET /api/xwiki/search/answer
+Admin --> Service : HTTPS/HTTP\nGET /api/xwiki/processAll\nPOST /api/xwiki/processPage\nGET /api/chat\nGET /api/embedding
+Service --> DB : JDBC / PostgreSQL 5432\nчтение/запись метаданных, чанков, векторов
+Service --> XWiki : HTTPS/HTTP REST + Basic Auth\nполучение spaces/pages/content
+Service --> AI : HTTP REST\nгенерация embeddings и chat completion
+
+note bottom of Service
+Trust boundaries:
+1. Внешние клиенты -> микросервис
+2. Микросервис -> внешние API
+3. Микросервис -> база данных
+end note
+
+note left of User
+Внешняя сеть
+end note
+
+note top of Service
+Сервисная зона
+end note
+
+note bottom of DB
+Зона данных
+end note
+
+note right of AI
+Внешние интеграции
+end note
+
+@enduml
