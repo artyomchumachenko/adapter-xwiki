@@ -52,12 +52,14 @@ jobs:
             -DoutputName=bom \
             -DoutputDirectory=target \
             -DskipAttach=true
-          if [ ! -f target/bom.json ]; then
-            echo "CycloneDX did not produce target/bom.json. Found candidates:"
-            find . -type f \( -name "bom.json" -o -name "bom.xml" -o -name "*cyclonedx*.json" -o -name "*cyclonedx*.xml" \) || true
+          SBOM_SOURCE="$(find target -type f \( -path "*/META-INF/sbom/*.json" -o -name "bom.json" -o -name "*.cdx.json" -o -name "*cyclonedx*.json" \) | head -n 1)"
+          if [ -z "$SBOM_SOURCE" ]; then
+            echo "CycloneDX did not produce a JSON SBOM in expected locations. Found candidates:"
+            find target -type f \( -name "*.json" -o -name "*.xml" \) || true
             exit 1
           fi
-          cp target/bom.json reports/sca/bom.json
+          echo "Using SBOM source: $SBOM_SOURCE"
+          cp "$SBOM_SOURCE" reports/sca/bom.json
 
       - name: Build SAST image
         run: docker build -f Dockerfile.sast -t xwiki-sast .

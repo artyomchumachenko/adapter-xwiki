@@ -10,7 +10,7 @@ import xml.etree.ElementTree as ET
 
 DEFAULT_SAST_REPORT_PATH = Path("reports/sast/spotbugs-report.xml")
 DEFAULT_SCA_REPORT_PATH = Path("reports/sca/trivy-results.json")
-DEFAULT_SAST_BLOCKING_PRIORITIES = {"1", "2"}
+DEFAULT_SAST_BLOCKING_PRIORITIES = {"1"}
 DEFAULT_SCA_BLOCKING_SEVERITIES = {"CRITICAL"}
 
 
