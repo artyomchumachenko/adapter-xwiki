@@ -102,7 +102,7 @@ jobs:
           cp target/spotbugs.sarif.json reports/sast/spotbugs.sarif.json
 
       - name: Install Trivy CLI
-        uses: aquasecurity/setup-trivy@v0.2.4
+        uses: aquasecurity/setup-trivy@v0.2.6
         with:
           version: v0.69.3
           cache: true
