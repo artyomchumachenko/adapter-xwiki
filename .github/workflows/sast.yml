@@ -47,11 +47,18 @@ jobs:
 
       - name: Generate CycloneDX SBOM
         run: |
-          ./mvnw -DskipTests org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeAggregateBom \
+          ./mvnw -DskipTests org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeBom \
             -Dcyclonedx.outputFormat=json \
             -Dcyclonedx.outputName=bom \
             -Dcyclonedx.outputDirectory=reports/sca \
             -Dcyclonedx.skipAttach=true
+
+      - name: Debug SBOM output locations
+        if: always()
+        run: |
+          echo "Inspecting possible SBOM locations..."
+          ls -la reports/sca || true
+          ls -la target || true
 
       - name: Normalize SBOM path
         run: |
