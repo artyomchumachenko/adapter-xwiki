@@ -40,6 +40,19 @@ jobs:
       - name: Make Maven wrapper executable
         run: chmod +x ./mvnw
 
+      - name: Generate Maven dependency inventory
+        run: |
+          ./mvnw -DskipTests dependency:list -DoutputFile=reports/sca/dependency-list.txt
+          ./mvnw -DskipTests dependency:tree -DoutputFile=reports/sca/dependency-tree.txt
+
+      - name: Generate CycloneDX SBOM
+        run: |
+          ./mvnw -DskipTests org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeAggregateBom \
+            -Dcyclonedx.outputFormat=json \
+            -Dcyclonedx.outputName=bom \
+            -Dcyclonedx.outputDirectory=reports/sca \
+            -Dcyclonedx.skipAttach=true
+
       - name: Build SAST image
         run: docker build -f Dockerfile.sast -t xwiki-sast .
 
@@ -53,19 +66,6 @@ jobs:
             -w /workspace \
             xwiki-sast \
             "mvn -DskipTests compile"
-
-      - name: Generate Maven dependency inventory
-        run: |
-          ./mvnw -DskipTests dependency:list -DoutputFile=reports/sca/dependency-list.txt
-          ./mvnw -DskipTests dependency:tree -DoutputFile=reports/sca/dependency-tree.txt
-
-      - name: Generate CycloneDX SBOM
-        run: |
-          ./mvnw -DskipTests org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeAggregateBom \
-            -Dcyclonedx.outputFormat=json \
-            -Dcyclonedx.outputName=bom \
-            -Dcyclonedx.outputDirectory=reports/sca \
-            -Dcyclonedx.skipAttach=true
 
       - name: Generate XML report
         run: |
