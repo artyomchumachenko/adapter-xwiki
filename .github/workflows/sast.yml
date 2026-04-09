@@ -50,7 +50,6 @@ jobs:
         run: |
           docker run --rm \
             -v "${{ github.workspace }}:/workspace" \
-            -v "$HOME/.m2:/root/.m2" \
             -w /workspace \
             xwiki-sast \
             "mvn -DskipTests compile"
@@ -72,7 +71,6 @@ jobs:
         run: |
           docker run --rm \
             -v "${{ github.workspace }}:/workspace" \
-            -v "$HOME/.m2:/root/.m2" \
             -w /workspace \
             xwiki-sast \
             "mvn -P sast -DskipTests -Dspotbugs.xmlOutput=true -Dspotbugs.htmlOutput=false -Dspotbugs.sarifOutput=false spotbugs:spotbugs"
@@ -81,7 +79,6 @@ jobs:
         run: |
           docker run --rm \
             -v "${{ github.workspace }}:/workspace" \
-            -v "$HOME/.m2:/root/.m2" \
             -w /workspace \
             xwiki-sast \
             "mvn -P sast -DskipTests -Dspotbugs.xmlOutput=false -Dspotbugs.htmlOutput=true -Dspotbugs.outputDirectory=target/site spotbugs:spotbugs"
@@ -90,7 +87,6 @@ jobs:
         run: |
           docker run --rm \
             -v "${{ github.workspace }}:/workspace" \
-            -v "$HOME/.m2:/root/.m2" \
             -w /workspace \
             xwiki-sast \
             "mvn -P sast -DskipTests -Dspotbugs.xmlOutput=false -Dspotbugs.htmlOutput=false -Dspotbugs.sarifOutput=true -Dspotbugs.sarifOutputDirectory=target -Dspotbugs.sarifOutputFilename=spotbugs.sarif.json spotbugs:spotbugs"
