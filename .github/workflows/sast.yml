@@ -15,6 +15,9 @@ jobs:
     permissions:
       contents: read
       security-events: write
+    env:
+      SCA_BLOCKING_SEVERITIES: CRITICAL
+      ENFORCE_SCA_GATE: "true"
 
     steps:
       - name: Checkout repository
@@ -144,12 +147,27 @@ jobs:
         id: sca_gate
         if: always()
         continue-on-error: true
-        run: python3 scripts/security_gate.py --mode sca --sca-blocking-severities CRITICAL
+        run: python3 scripts/security_gate.py --mode sca --sca-blocking-severities "${SCA_BLOCKING_SEVERITIES}"
 
       - name: Enforce security gates
         if: always()
         run: |
-          if [ "${{ steps.sast_gate.outcome }}" != "success" ] || [ "${{ steps.sca_gate.outcome }}" != "success" ]; then
+          echo "SAST gate outcome: ${{ steps.sast_gate.outcome }}"
+          echo "SCA gate outcome:  ${{ steps.sca_gate.outcome }}"
+          echo "SCA enforcement:   ${ENFORCE_SCA_GATE}"
+
+          FAILED=0
+          if [ "${{ steps.sast_gate.outcome }}" != "success" ]; then
+            echo "Blocking: SAST gate failed."
+            FAILED=1
+          fi
+
+          if [ "${ENFORCE_SCA_GATE}" = "true" ] && [ "${{ steps.sca_gate.outcome }}" != "success" ]; then
+            echo "Blocking: SCA gate failed."
+            FAILED=1
+          fi
+
+          if [ "${FAILED}" -ne 0 ]; then
             echo "Security gate failed. Check SAST and SCA reports for details."
             exit 1
           fi

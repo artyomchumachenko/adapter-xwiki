@@ -5,7 +5,7 @@
     <parent>
         <groupId>org.springframework.boot</groupId>
         <artifactId>spring-boot-starter-parent</artifactId>
-        <version>3.3.0</version>
+        <version>3.3.11</version>
         <relativePath /> <!-- lookup parent from repository -->
     </parent>
     <groupId>ru.cbgr.adapter</groupId>
@@ -44,7 +44,7 @@
 		<dependency>
 			<groupId>org.postgresql</groupId>
 			<artifactId>postgresql</artifactId>
-			<version>42.7.4</version>
+			<version>42.7.7</version>
 		</dependency>
 
         <dependency>
@@ -87,9 +87,9 @@
             <scope>runtime</scope>
         </dependency>
         <dependency>
-            <groupId>org.xwiki.platform</groupId>
-            <artifactId>xwiki-core-rendering-parser-wikimodel</artifactId>
-            <version>2.1-milestone-1</version>
+            <groupId>org.xwiki.rendering</groupId>
+            <artifactId>xwiki-rendering-wikimodel</artifactId>
+            <version>17.6.0</version>
             <scope>runtime</scope>
         </dependency>
 
