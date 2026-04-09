@@ -53,6 +53,23 @@ jobs:
             -Dcyclonedx.outputDirectory=reports/sca \
             -Dcyclonedx.skipAttach=true
 
+      - name: Normalize SBOM path
+        run: |
+          if [ -f reports/sca/bom.json ]; then
+            echo "SBOM file already exists at reports/sca/bom.json"
+          elif [ -f target/bom.json ]; then
+            cp target/bom.json reports/sca/bom.json
+            echo "SBOM copied from target/bom.json"
+          elif [ -f bom.json ]; then
+            cp bom.json reports/sca/bom.json
+            echo "SBOM copied from bom.json"
+          else
+            echo "CycloneDX SBOM file was not found in expected locations."
+            echo "Listing candidate files:"
+            find . -maxdepth 4 -type f \( -name "bom.json" -o -name "bom.xml" -o -name "*cyclonedx*" \) || true
+            exit 1
+          fi
+
       - name: Build SAST image
         run: docker build -f Dockerfile.sast -t xwiki-sast .
 
@@ -157,13 +174,13 @@ jobs:
           if-no-files-found: error
 
       - name: Upload SpotBugs SARIF to GitHub Code Scanning
-        if: always()
+        if: always() && hashFiles('reports/sast/spotbugs.sarif.json') != ''
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: reports/sast/spotbugs.sarif.json
 
       - name: Upload Trivy SARIF to GitHub Code Scanning
-        if: always()
+        if: always() && hashFiles('reports/sca/trivy-results.sarif') != ''
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: reports/sca/trivy-results.sarif
