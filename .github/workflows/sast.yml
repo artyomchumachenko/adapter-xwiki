@@ -1,4 +1,4 @@
-name: SAST
+name: Security
 
 on:
   push:
@@ -10,7 +10,7 @@ on:
   pull_request:
 
 jobs:
-  sast:
+  security:
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -24,11 +24,18 @@ jobs:
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: "21"
           cache: maven
 
-      - name: Create report directory
-        run: mkdir -p reports/sast
+      - name: Set up Python 3
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Create report directories
+        run: |
+          mkdir -p reports/sast
+          mkdir -p reports/sca
 
       - name: Make Maven wrapper executable
         run: chmod +x ./mvnw
@@ -47,6 +54,19 @@ jobs:
             -w /workspace \
             xwiki-sast \
             "mvn -DskipTests compile"
+
+      - name: Generate Maven dependency inventory
+        run: |
+          ./mvnw -DskipTests dependency:list -DoutputFile=reports/sca/dependency-list.txt
+          ./mvnw -DskipTests dependency:tree -DoutputFile=reports/sca/dependency-tree.txt
+
+      - name: Generate CycloneDX SBOM
+        run: |
+          ./mvnw -DskipTests org.cyclonedx:cyclonedx-maven-plugin:2.9.1:makeAggregateBom \
+            -Dcyclonedx.outputFormat=json \
+            -Dcyclonedx.outputName=bom \
+            -Dcyclonedx.outputDirectory=reports/sca \
+            -Dcyclonedx.skipAttach=true
 
       - name: Generate XML report
         run: |
@@ -75,23 +95,79 @@ jobs:
             xwiki-sast \
             "mvn -P sast -DskipTests -Dspotbugs.xmlOutput=false -Dspotbugs.htmlOutput=false -Dspotbugs.sarifOutput=true -Dspotbugs.sarifOutputDirectory=target -Dspotbugs.sarifOutputFilename=spotbugs.sarif.json spotbugs:spotbugs"
 
-      - name: Copy reports
+      - name: Copy SAST reports
         run: |
           cp target/spotbugsXml.xml reports/sast/spotbugs-report.xml
           cp target/site/spotbugs.html reports/sast/spotbugs-report.html
           cp target/spotbugs.sarif.json reports/sast/spotbugs.sarif.json
 
-      - name: Security gate
-        run: python3 scripts/security_gate.py
+      - name: Install Trivy CLI
+        uses: aquasecurity/setup-trivy@v0.2.4
+        with:
+          version: v0.69.3
+          cache: true
 
-      - name: Upload scan artifacts
+      - name: Run Trivy scan against SBOM (JSON)
+        run: |
+          trivy sbom \
+            --scanners vuln \
+            --format json \
+            --output reports/sca/trivy-results.json \
+            reports/sca/bom.json
+
+      - name: Run Trivy scan against SBOM (table)
+        run: |
+          trivy sbom \
+            --scanners vuln \
+            --format table \
+            --output reports/sca/trivy-results.txt \
+            reports/sca/bom.json
+
+      - name: Run Trivy scan against SBOM (SARIF)
+        run: |
+          trivy sbom \
+            --scanners vuln \
+            --format sarif \
+            --output reports/sca/trivy-results.sarif \
+            reports/sca/bom.json
+
+      - name: SAST security gate
+        id: sast_gate
+        continue-on-error: true
+        run: python3 scripts/security_gate.py --mode sast
+
+      - name: SCA security gate
+        id: sca_gate
+        if: always()
+        continue-on-error: true
+        run: python3 scripts/security_gate.py --mode sca --sca-blocking-severities CRITICAL
+
+      - name: Enforce security gates
+        if: always()
+        run: |
+          if [ "${{ steps.sast_gate.outcome }}" != "success" ] || [ "${{ steps.sca_gate.outcome }}" != "success" ]; then
+            echo "Security gate failed. Check SAST and SCA reports for details."
+            exit 1
+          fi
+
+      - name: Upload security artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: spotbugs-report
-          path: reports/sast/
+          name: security-reports
+          path: |
+            reports/sast/
+            reports/sca/
           if-no-files-found: error
 
-      - name: Upload SARIF to GitHub Code Scanning
+      - name: Upload SpotBugs SARIF to GitHub Code Scanning
+        if: always()
         uses: github/codeql-action/upload-sarif@v3
         with:
           sarif_file: reports/sast/spotbugs.sarif.json
+
+      - name: Upload Trivy SARIF to GitHub Code Scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: reports/sca/trivy-results.sarif
