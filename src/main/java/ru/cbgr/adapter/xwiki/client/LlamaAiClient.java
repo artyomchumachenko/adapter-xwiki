@@ -1,6 +1,7 @@
 package ru.cbgr.adapter.xwiki.client;
 
 import java.util.List;
+import java.util.Optional;
 
 import org.springframework.ai.chat.model.ChatResponse;
 import org.springframework.ai.chat.prompt.Prompt;
@@ -22,19 +23,16 @@ import lombok.extern.slf4j.Slf4j;
 public class LlamaAiClient {
 
     private final OllamaChatModel chatModel;
-    private final OllamaEmbeddingModel embeddingModel;
+    private final Optional<OllamaEmbeddingModel> embeddingModel;
 
     private final ModelsProperties properties;
 
     public ChatResponse generateResult(String prompt) {
-        ChatResponse response = chatModel.call(
+        return chatModel.call(
                 new Prompt(
                         prompt,
-                        OllamaOptions.create()
-                                .withModel(properties.llmModel())
+                        OllamaOptions.create().withModel(properties.llmModel())
                 ));
-
-        return response;
     }
 
     public EmbeddingResponse getEmbeddings(String chunk, String modelName) {
@@ -43,11 +41,17 @@ public class LlamaAiClient {
             throw new IllegalArgumentException("Входной chunk не должен быть пустым.");
         }
 
+        if (embeddingModel.isEmpty()) {
+            throw new IllegalStateException(
+                    "OllamaEmbeddingModel недоступен. Установите AI_EMBEDDING_ENABLED=true для embedding-вызовов."
+            );
+        }
+
         EmbeddingRequest request = new EmbeddingRequest(
                 List.of(chunk),
                 OllamaOptions.create().withModel(modelName)
         );
 
-        return embeddingModel.call(request);
+        return embeddingModel.get().call(request);
     }
 }

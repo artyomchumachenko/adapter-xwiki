@@ -12,6 +12,7 @@ target/
 .settings
 .springBeans
 .sts4-cache
+actions-runner
 
 ### IntelliJ IDEA ###
 .idea
@@ -35,3 +36,6 @@ build/
 .cursorrules
 .cursor
 reports/sast/
+reports/dast/*
+!reports/dast/suppressions.yml
+.env.dast.local

@@ -1,0 +1,11 @@
+suppressions:
+  # Example:
+  # - tool: nuclei
+  #   id: CVE-2023-0000
+  #   path_contains: /api/chat
+  #   reason: "Accepted risk until component upgrade"
+  #
+  # - tool: zap
+  #   id: "10054"
+  #   path_contains: /actuator/health
+  #   reason: "Known false positive in test environment"

@@ -1,0 +1,170 @@
+name: DAST
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+      - master
+      - "release/**"
+  workflow_dispatch:
+
+jobs:
+  dast:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    env:
+      DAST_BLOCKING_SEVERITIES: ${{ vars.DAST_BLOCKING_SEVERITIES || 'CRITICAL' }}
+      DAST_FAIL_OPEN_ON_PR: ${{ vars.DAST_FAIL_OPEN_ON_PR || 'true' }}
+      DAST_TARGET_URL: ${{ vars.DAST_TARGET_URL }}
+      DAST_TARGET_URL_SECRET: ${{ secrets.DAST_TARGET_URL }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Install gate dependencies
+        run: pip install pyyaml
+
+      - name: Create report directories
+        run: |
+          mkdir -p reports/dast
+
+      - name: Resolve target URL
+        id: resolve_target
+        run: |
+          TARGET_URL="${DAST_TARGET_URL}"
+          if [ -z "${TARGET_URL}" ]; then
+            TARGET_URL="${DAST_TARGET_URL_SECRET}"
+          fi
+          TARGET_URL="${TARGET_URL%/}"
+
+          if [ -z "${TARGET_URL}" ]; then
+            echo "target_url_missing=true" >> "$GITHUB_OUTPUT"
+            echo "target_url=" >> "$GITHUB_OUTPUT"
+            echo "::warning::DAST target URL is not configured (vars/secrets: DAST_TARGET_URL)."
+            exit 0
+          fi
+
+          echo "target_url_missing=false" >> "$GITHUB_OUTPUT"
+          echo "target_url=${TARGET_URL}" >> "$GITHUB_OUTPUT"
+
+      - name: Evaluate fail mode
+        id: fail_mode
+        run: |
+          if [ "${{ github.event_name }}" = "pull_request" ] && [ "${DAST_FAIL_OPEN_ON_PR}" = "true" ]; then
+            echo "target_required=false" >> "$GITHUB_OUTPUT"
+            echo "mode=fail-open" >> "$GITHUB_OUTPUT"
+          else
+            echo "target_required=true" >> "$GITHUB_OUTPUT"
+            echo "mode=fail-closed" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Health check target
+        id: health
+        if: steps.resolve_target.outputs.target_url_missing != 'true'
+        continue-on-error: true
+        run: |
+          curl --fail --show-error --silent --max-time 20 \
+            "${{ steps.resolve_target.outputs.target_url }}/actuator/health" > reports/dast/health.json
+
+      - name: Decide target availability
+        id: availability
+        run: |
+          if [ "${{ steps.resolve_target.outputs.target_url_missing }}" = "true" ]; then
+            echo "target_available=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          if [ "${{ steps.health.outcome }}" = "success" ]; then
+            echo "target_available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "target_available=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run OWASP ZAP baseline
+        if: steps.availability.outputs.target_available == 'true'
+        run: |
+          SEARCH_TARGET="${{ steps.resolve_target.outputs.target_url }}/api/xwiki/search?query=security-test&limit=1"
+          docker run --rm \
+            -v "${{ github.workspace }}:/zap/wrk" \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-baseline.py \
+            -t "${SEARCH_TARGET}" \
+            -m 3 \
+            -J "reports/dast/zap-report.json" \
+            -r "reports/dast/zap-report.html" \
+            -I \
+            -z "-config globalexcludeurl.url_list.url(0).regex=.*\\/api\\/(?!xwiki\\/search(\\?.*)?$).* \
+                -config globalexcludeurl.url_list.url(0).description=exclude-non-search-api \
+                -config globalexcludeurl.url_list.url(0).enabled=true"
+
+      - name: Build API target list for Nuclei
+        if: steps.availability.outputs.target_available == 'true'
+        run: |
+          TARGET_URL="${{ steps.resolve_target.outputs.target_url }}"
+          > reports/dast/nuclei-targets.txt
+          while IFS= read -r line; do
+            [ -z "$line" ] && continue
+            case "$line" in \#*) continue ;; esac
+            echo "${TARGET_URL}${line}" >> reports/dast/nuclei-targets.txt
+          done < scripts/dast-api-targets.txt
+
+      - name: Run Nuclei
+        if: steps.availability.outputs.target_available == 'true'
+        run: |
+          docker run --rm \
+            -v "${{ github.workspace }}:/workspace" \
+            projectdiscovery/nuclei:latest \
+            -l /workspace/reports/dast/nuclei-targets.txt \
+            -json-export /workspace/reports/dast/nuclei-report.json
+
+      - name: Run DAST gate
+        id: dast_gate
+        if: steps.availability.outputs.target_available == 'true'
+        continue-on-error: true
+        run: |
+          python3 scripts/security_gate.py \
+            --mode dast \
+            --zap-report reports/dast/zap-report.json \
+            --nuclei-report reports/dast/nuclei-report.json \
+            --dast-suppressions reports/dast/suppressions.yml \
+            --dast-blocking-severities "${DAST_BLOCKING_SEVERITIES}"
+
+      - name: Enforce DAST policy
+        if: always()
+        run: |
+          echo "Policy mode:           ${{ steps.fail_mode.outputs.mode }}"
+          echo "Target available:      ${{ steps.availability.outputs.target_available }}"
+          echo "DAST gate outcome:     ${{ steps.dast_gate.outcome }}"
+          echo "Event:                 ${{ github.event_name }}"
+
+          if [ "${{ steps.availability.outputs.target_available }}" != "true" ]; then
+            if [ "${{ steps.fail_mode.outputs.target_required }}" = "true" ]; then
+              echo "Blocking: DAST target is unavailable in fail-closed mode."
+              exit 1
+            fi
+
+            echo "::warning::DAST target is unavailable. Fail-open mode is active for this event."
+            exit 0
+          fi
+
+          if [ "${{ steps.dast_gate.outcome }}" != "success" ]; then
+            echo "Blocking: DAST gate failed."
+            exit 1
+          fi
+
+      - name: Upload DAST artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dast-reports
+          path: |
+            reports/dast/
+          if-no-files-found: warn

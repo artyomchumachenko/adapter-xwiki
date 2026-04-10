@@ -1,0 +1,9 @@
+spring:
+  ai:
+    ollama:
+      embedding:
+        enabled: false
+
+xwiki:
+  modifications:
+    enabled: false
